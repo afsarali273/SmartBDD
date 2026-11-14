@@ -1,6 +1,27 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { EventBus, parseSpec } from '@bddx/core';
-import { After, Before, BeforeAll, CONTEXT, Executor, Given, Steps, Then, When, getGlobalRegistry, resetGlobalRegistry, type StepContext } from '@bddx/runtime';
+import {
+  After,
+  AfterSuite,
+  Before,
+  BeforeAll,
+  BeforeFeature,
+  BeforeRule,
+  BeforeScenario,
+  BeforeStep,
+  BeforeSuite,
+  CONTEXT,
+  Executor,
+  Given,
+  Steps,
+  Then,
+  When,
+  getGlobalRegistry,
+  resetGlobalRegistry,
+  type FeatureContext,
+  type RunContext,
+  type StepContext,
+} from '@bddx/runtime';
 
 afterEach(() => void resetGlobalRegistry());
 
@@ -16,8 +37,43 @@ describe('class-based steps', () => {
     expect('then' in mod).toBe(false);
   });
 
-  it('run/feature hooks refuse to decorate methods', () => {
-    expect(() => (BeforeAll as unknown as (o?: object) => unknown)()).toThrow(/cannot decorate class methods/);
+  it('TestNG-style lifecycle on static methods: suite, feature, rule, scenario, step', async () => {
+    resetGlobalRegistry();
+    const log: string[] = [];
+    class Lifecycle {
+      @BeforeSuite() static suite(ctx: RunContext) {
+        log.push(`suite ${typeof ctx.run}`);
+      }
+      @AfterSuite() static suiteEnd() {
+        log.push('suite end');
+      }
+      @BeforeFeature() static feature(ctx: FeatureContext) {
+        log.push(`feature ${ctx.featureInfo.name}`);
+      }
+      @BeforeRule() static rule(ctx: FeatureContext) {
+        log.push(`rule ${ctx.rule?.name}`);
+      }
+      @BeforeScenario() static scenario(ctx: StepContext) {
+        log.push(`scenario ${ctx.scenario.name}`);
+      }
+      @BeforeStep() static step(ctx: StepContext) {
+        log.push(`step ${ctx.step?.text}`);
+      }
+    }
+    void Lifecycle;
+    Given('ok', () => {});
+    await runFeature(`Feature: F\n  Rule: R\n    Scenario: S\n      Given ok\n`);
+    expect(log).toEqual(['suite object', 'feature F', 'rule R', 'scenario S', 'step ok', 'suite end']);
+    expect(getGlobalRegistry().hooksFor('run', 'before')[0]!.name).toBe('Lifecycle.suite');
+  });
+
+  it('suite/feature hooks refuse instance methods', () => {
+    expect(() => {
+      class Bad {
+        @BeforeAll() notStatic() {}
+      }
+      void Bad;
+    }).toThrow(/make it static/);
   });
 
   it('still registers plain function steps', () => {

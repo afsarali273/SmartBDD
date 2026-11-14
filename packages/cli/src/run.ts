@@ -6,7 +6,8 @@ import {
   EventBus,
   createFileDataLoader,
   parsePathWithLines,
-  parseSpecAsync,
+  parseSpecFile,
+  specFileGlobSuffix,
   type DataLoader,
   selectScenarios,
   type ParsedSpec,
@@ -65,7 +66,7 @@ export async function discoverSpecs(rootDir: string, patterns: string[]): Promis
     const abs = isAbsolute(path) ? path : resolve(rootDir, path);
     const st = await stat(abs).catch(() => undefined);
     if (st?.isDirectory()) {
-      globs.push(toPosix(relative(rootDir, abs) || '.') + '/**/*.{feature,feature.md}');
+      globs.push(toPosix(relative(rootDir, abs) || '.') + `/**/*.${specFileGlobSuffix()}`);
     } else if (st?.isFile()) {
       const uri = toPosix(relative(rootDir, abs));
       globs.push(uri);
@@ -115,7 +116,7 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const specs: ParsedSpec[] = [];
   for (const uri of files) {
     const source = await readFile(resolve(rootDir, uri), 'utf8');
-    specs.push(await parseSpecAsync(source, uri, { dataLoader, ...(opts.language ? { language: opts.language } : {}) }));
+    specs.push(await parseSpecFile(source, uri, { dataLoader, ...(opts.language ? { language: opts.language } : {}) }));
   }
   const all = specs.flatMap((s) => s.scenarios);
   const selected = selectScenarios(all, {

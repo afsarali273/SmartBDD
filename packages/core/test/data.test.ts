@@ -171,3 +171,24 @@ describe('@data expansion', () => {
     expect(spec.errors[0]!.message).toMatch(/no data loader is configured/);
   });
 });
+
+describe('ports', () => {
+  it('picks spec parsers by longest suffix and reports unknown files as parse errors', async () => {
+    const { registerSpecParser, specParserFor, parseSpecFile, specFileGlobSuffix } = await import('@bddx/core');
+    expect(specParserFor('a/b.feature')?.name).toBe('gherkin (cucumber)');
+    expect(specParserFor('a/b.feature.md')?.name).toBe('gherkin (cucumber)');
+    registerSpecParser({ name: 'test-md', extensions: ['.spec.md'], parse: async (_s, uri) => ({ uri, scenarios: [], errors: [] }) });
+    expect(specParserFor('x.spec.md')?.name).toBe('test-md');
+    expect(specFileGlobSuffix()).toBe('{spec.md,feature,feature.md}');
+    const unknown = await parseSpecFile('x', 'notes.txt');
+    expect(unknown.errors[0]!.message).toMatch(/No spec parser for "notes.txt"/);
+  });
+
+  it('tag expression engine is swappable', async () => {
+    const { setTagExpressionEngine, compileTagExpression, cucumberTagExpressions } = await import('@bddx/core');
+    setTagExpressionEngine({ name: 'any-of', compile: (e) => (tags) => e.split(',').some((t) => tags.includes(t)) });
+    expect(compileTagExpression('@a,@b')(['@b'])).toBe(true);
+    setTagExpressionEngine(cucumberTagExpressions);
+    expect(compileTagExpression('@a and @b')(['@b'])).toBe(false);
+  });
+});

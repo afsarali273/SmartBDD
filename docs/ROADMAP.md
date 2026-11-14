@@ -41,10 +41,15 @@ file is self-contained.
 - [x] Stable ids for data rows: `<base>[<source>#<row>]`, base from the TEMPLATE name
 - [x] Data errors = parse errors on the tag line (missing file/column, bad filter, no rows); scenario dropped, exit 2
 - [ ] Data providers for SQL queries and HTTP endpoints (plugin API, phase 6)
-- [ ] Gauge-style Markdown spec format (headings = scenarios, `*` = steps, tables) as a second parser
 - [ ] Text-defined composite steps (`.steps.md` or `.concept` files)
 - [ ] Call a scenario from a step: `Given I run scenario "X" from "y.feature"`
 - [ ] Gate: same feature runs from inline Examples, CSV and XLSX with identical results
+
+## Cross-cutting: own architecture, swappable third-party parts
+
+- [x] Ports (`core/src/ports.ts`, `runtime/src/ports.ts`): `SpecParser`, `TagExpressionEngine`, `StepExpressionEngine`
+- [x] Cucumber libraries isolated in `adapters/` (only files allowed to import them); spec parser registry by suffix
+- [x] TestNG-style hook names (`BeforeSuite`/`AfterSuite`) and hook decorators on static methods at every level
 
 ## Phase 3: Orchestration (the differentiator)
 
@@ -93,6 +98,17 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [ ] Interactive debug mode (pause on failure, inspect context)
 - [ ] VS Code extension + language server (step completion, go to definition)
 - [ ] Watch mode, CI sharding by duration
+
+## Parked: code-linked Markdown specs (owner's idea, later phase)
+
+Free-form Markdown documents whose references (symbol links, file:line links, inline calls) bind directly to step code
+in TS/Java; the annotated document is the report. Design note: [design/code-linked-markdown.md](design/code-linked-markdown.md).
+
+- [ ] Settle binding syntax and file selection (open questions in the design note)
+- [ ] Registry: index step definitions by symbol (class.method / function) in addition to pattern
+- [ ] `SpecParser` for Markdown with bindings
+- [ ] `bddx validate` + `bddx bind --fix` (rewrite line links to symbols)
+- [ ] Markdown report renderer with inline statuses
 
 ## Phase 6: Ecosystem
 

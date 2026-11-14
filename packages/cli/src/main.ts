@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BDDX_VERSION, parseSpecAsync, selectScenarios } from '@bddx/core';
+import { BDDX_VERSION, parseSpecFile, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
 import { discoverSpecs, makeDataLoader, registerTypeScriptLoader, runBddx } from './run.js';
 import type { Reporter } from '@bddx/reporters';
@@ -118,7 +118,7 @@ async function list(paths: string[], config?: string, profile?: string, tags?: s
   let errors = 0;
   const dataLoader = makeDataLoader(loaded.rootDir, opts, profile);
   for (const uri of files) {
-    const spec = await parseSpecAsync(await readFile(resolve(loaded.rootDir, uri), 'utf8'), uri, { dataLoader });
+    const spec = await parseSpecFile(await readFile(resolve(loaded.rootDir, uri), 'utf8'), uri, { dataLoader });
     for (const e of spec.errors) {
       errors++;
       process.stderr.write(`${e.uri}:${e.line ?? '?'} ${e.message}\n`);

@@ -1,5 +1,15 @@
-import { parse as parseTagExpressionRaw } from '@cucumber/tag-expressions';
+import { cucumberTagExpressions } from './adapters/cucumber-tag-expressions.js';
 import type { Tag } from './model.js';
+import type { TagExpressionEngine, TagPredicate } from './ports.js';
+
+export type { TagPredicate };
+
+let engine: TagExpressionEngine = cucumberTagExpressions;
+
+/** Swap the tag-expression implementation (default: Cucumber tag expressions). */
+export function setTagExpressionEngine(next: TagExpressionEngine): void {
+  engine = next;
+}
 
 /**
  * Split a tag into key/value.
@@ -24,8 +34,6 @@ export function tagsToMeta(tags: readonly Tag[]): Record<string, string> {
   return meta;
 }
 
-export type TagPredicate = (tagNames: readonly string[]) => boolean;
-
 /**
  * Compile a Cucumber tag expression ("@smoke and not @wip").
  * Empty / undefined expression matches everything.
@@ -34,8 +42,7 @@ export type TagPredicate = (tagNames: readonly string[]) => boolean;
 export function compileTagExpression(expression: string | undefined): TagPredicate {
   if (!expression || !expression.trim()) return () => true;
   try {
-    const node = parseTagExpressionRaw(expression);
-    return (tagNames) => node.evaluate([...tagNames]);
+    return engine.compile(expression);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Invalid tag expression "${expression}": ${msg}`);

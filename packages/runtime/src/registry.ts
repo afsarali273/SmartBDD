@@ -1,11 +1,5 @@
-import {
-  CucumberExpression,
-  CucumberExpressionGenerator,
-  ParameterType,
-  ParameterTypeRegistry,
-  RegularExpression,
-  type Expression,
-} from '@cucumber/cucumber-expressions';
+import { createCucumberExpressionEngine } from './adapters/cucumber-expressions.js';
+import type { CompiledStepPattern, ParameterTypeOptions, StepExpressionEngine } from './ports.js';
 import { compileTagExpression, createIdGenerator, type HookKind, type HookLevel, type StepInstance, type TagPredicate } from '@bddx/core';
 import type {
   AnyHookFn,
@@ -28,13 +22,7 @@ export interface StepDefinition {
   seq: number;
 }
 
-export interface ParameterTypeOptions<T> {
-  name: string;
-  regexp: RegExp | string | readonly (RegExp | string)[];
-  transformer?: (...match: string[]) => T | PromiseLike<T>;
-  useForSnippets?: boolean;
-  preferForRegexpMatch?: boolean;
-}
+export type { ParameterTypeOptions };
 
 export type MatchResult =
   | { kind: 'match'; definition: StepDefinition; values: unknown[] }
@@ -43,7 +31,7 @@ export type MatchResult =
 
 interface CompiledStep {
   def: StepDefinition;
-  expression: Expression;
+  expression: CompiledStepPattern;
   scope?: TagPredicate;
 }
 
@@ -54,7 +42,8 @@ interface CompiledStep {
  * may be defined after the steps that use them, in any file load order.
  */
 export class SupportRegistry {
-  readonly parameterTypes = new ParameterTypeRegistry();
+  /** Pattern language (default: Cucumber Expressions). Swap via the constructor. */
+  readonly engine: StepExpressionEngine;
   private readonly steps: StepDefinition[] = [];
   private readonly hooks: HookDefinition[] = [];
   private compiled: CompiledStep[] | undefined;
@@ -62,6 +51,10 @@ export class SupportRegistry {
   private nextStepId = createIdGenerator('step-def-');
   private nextHookId = createIdGenerator('hook-');
   defaultTimeoutMs = 30_000;
+
+  constructor(options: { engine?: StepExpressionEngine } = {}) {
+    this.engine = options.engine ?? createCucumberExpressionEngine();
+  }
 
   defineStep(pattern: string | RegExp, fn: StepFn, options: StepOptions = {}, location?: string): StepDefinition {
     if (typeof fn !== 'function') throw new Error(`Step "${String(pattern)}" needs a function`);
@@ -102,16 +95,7 @@ export class SupportRegistry {
   }
 
   defineParameterType<T>(opts: ParameterTypeOptions<T>): void {
-    this.parameterTypes.defineParameterType(
-      new ParameterType<T>(
-        opts.name,
-        opts.regexp as never,
-        null,
-        opts.transformer ?? ((s: string) => s as unknown as T),
-        opts.useForSnippets ?? true,
-        opts.preferForRegexpMatch ?? false,
-      ),
-    );
+    this.engine.defineParameterType(opts);
     this.compiled = undefined;
   }
 
@@ -119,12 +103,9 @@ export class SupportRegistry {
   finalize(): void {
     if (this.compiled) return;
     this.compiled = this.steps.map((def) => {
-      let expression: Expression;
+      let expression: CompiledStepPattern;
       try {
-        expression =
-          typeof def.pattern === 'string'
-            ? new CucumberExpression(def.pattern, this.parameterTypes)
-            : new RegularExpression(def.pattern, this.parameterTypes);
+        expression = this.engine.compile(def.pattern);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Invalid step pattern "${String(def.pattern)}"${def.location ? ` at ${def.location}` : ''}: ${msg}`);
@@ -142,7 +123,7 @@ export class SupportRegistry {
    */
   async match(text: string, scenarioTags: readonly string[]): Promise<MatchResult> {
     this.finalize();
-    const hits: Array<{ c: CompiledStep; args: NonNullable<ReturnType<Expression['match']>> }> = [];
+    const hits: Array<{ c: CompiledStep; args: NonNullable<ReturnType<CompiledStepPattern['match']>> }> = [];
     for (const c of this.compiled!) {
       if (c.scope && !c.scope(scenarioTags)) continue;
       const args = c.expression.match(text);
@@ -153,7 +134,7 @@ export class SupportRegistry {
     const winners = scoped.length ? scoped : hits;
     if (winners.length > 1) return { kind: 'ambiguous', candidates: winners.map((w) => w.c.def) };
     const { c, args } = winners[0]!;
-    const values = await Promise.all(args.map((a) => a.getValue(null)));
+    const values = await args.values();
     return { kind: 'match', definition: c.def, values };
   }
 
@@ -174,18 +155,10 @@ export class SupportRegistry {
 
   /** Ready-to-paste TypeScript for an undefined step. */
   snippetFor(step: Pick<StepInstance, 'text' | 'keywordType' | 'argument'>): string {
-    const generator = new CucumberExpressionGenerator(() => this.parameterTypes.parameterTypes);
-    const [best] = generator.generateExpressions(step.text);
+    const best = this.engine.suggest(step.text);
     const keyword = step.keywordType === 'action' ? 'When' : step.keywordType === 'outcome' ? 'Then' : 'Given';
-    const pattern = best ? best.source : step.text;
-    const params: string[] = ['ctx'];
-    if (best) {
-      best.parameterNames.forEach((name, i) => {
-        const t = best.parameterTypes[i]?.name;
-        const ts = t === 'int' || t === 'float' || t === 'double' || t === 'bigdecimal' ? 'number' : 'string';
-        params.push(`${name}: ${ts}`);
-      });
-    }
+    const pattern = best ? best.pattern : step.text;
+    const params: string[] = ['ctx', ...(best?.parameters.map((p) => `${p.name}: ${p.type}`) ?? [])];
     if (step.argument?.kind === 'dataTable') params.push('table: DataTable');
     if (step.argument?.kind === 'docString') params.push('docString: string');
     const quoted = `'${pattern.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;

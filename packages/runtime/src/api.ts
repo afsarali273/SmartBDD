@@ -10,7 +10,7 @@
  * Every function writes to the global SupportRegistry (see registry.ts).
  */
 import { callerLocation, getGlobalRegistry, type ParameterTypeOptions } from './registry.js';
-import { hookDecorator, stepDecorator, type MethodDecorator } from './decorators.js';
+import { hookDecorator, staticHookDecorator, stepDecorator, type MethodDecorator } from './decorators.js';
 import type {
   FeatureHookFn,
   HookOptions,
@@ -54,16 +54,15 @@ function normalise(opts: HookArg): HookOptions {
 function makeHook<F>(level: HookLevel, kind: HookKind) {
   function register(fn: F): void;
   function register(options: HookOptions | string, fn: F): void;
-  /** Without a function: a method decorator (scenario and step hooks only). */
+  /** Without a function: a method decorator (static methods: any level; instance methods in @Steps classes: scenario/step). */
   function register(options?: HookOptions | string): MethodDecorator;
   function register(a?: F | HookOptions | string, b?: F): void | MethodDecorator {
     const location = callerLocation();
     const [opts, fn] = typeof a === 'function' ? [undefined, a as F] : [a as HookArg, b];
     if (!fn) {
-      if (level !== 'scenario' && level !== 'step') {
-        throw new Error(`${kind} ${level} hooks cannot decorate class methods (instances are per scenario); register a function instead`);
-      }
-      return hookDecorator(level, kind, normalise(opts), location);
+      return level === 'scenario' || level === 'step'
+        ? hookDecorator(level, kind, normalise(opts), location)
+        : staticHookDecorator(level, kind, normalise(opts), location);
     }
     getGlobalRegistry().defineHook(level, kind, normalise(opts), fn as never, location);
   }
@@ -87,7 +86,9 @@ export const After = makeHook<ScenarioHookFn>('scenario', 'after');
 export const BeforeStep = makeHook<ScenarioHookFn>('step', 'before');
 export const AfterStep = makeHook<ScenarioHookFn>('step', 'after');
 
-/** Aliases that match the plan's naming. */
+/** TestNG-style aliases. Suite = the whole run (one process today; per worker in phase 3 → see BeforeWorker). */
+export const BeforeSuite = BeforeAll;
+export const AfterSuite = AfterAll;
 export const BeforeScenario = Before;
 export const AfterScenario = After;
 

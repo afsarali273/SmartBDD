@@ -37,6 +37,7 @@
  */
 import { callerLocation, getGlobalRegistry } from './registry.js';
 import type { HookOptions, StepContext, StepOptions } from './types.js';
+import type { HookLevel } from '@bddx/core';
 
 /** Injection token for the current StepContext. */
 export const CONTEXT: unique symbol = Symbol.for('bddx.inject.context');
@@ -61,11 +62,36 @@ export function stepDecorator(pattern: string | RegExp, options: StepOptions = {
   };
 }
 
+/**
+ * Hooks on STATIC methods: registered immediately (no @Steps() needed, no instance). The method
+ * receives the hook context as its argument. Works for every level, TestNG style:
+ *
+ *   class Lifecycle {
+ *     @BeforeSuite() static async startServer(ctx: RunContext) { ... }
+ *     @BeforeFeature('@db') static seed(ctx: FeatureContext) { ... }
+ *   }
+ */
+export function staticHookDecorator(level: HookLevel, when: 'before' | 'after', opts: HookOptions, location = callerLocation()): MethodDecorator {
+  return (value, context) => {
+    if (!context.static) {
+      throw new Error(
+        `${String(context.name)}: ${when}${level[0]!.toUpperCase()}${level.slice(1)} hooks on instance methods are only supported for scenario/step level; make it static`,
+      );
+    }
+    context.addInitializer(function (this: unknown) {
+      const cls = this as { name?: string };
+      const name = opts.name ?? `${cls.name ?? 'anonymous'}.${String(context.name)}`;
+      getGlobalRegistry().defineHook(level, when, { ...opts, name }, ((ctx: unknown) => (value as (c: unknown) => unknown).call(this, ctx)) as never, location);
+    });
+  };
+}
+
 /** Used by Before/After/BeforeStep/AfterStep when called without a function. */
 export function hookDecorator(level: 'scenario' | 'step', when: 'before' | 'after', opts: HookOptions, location = callerLocation()): MethodDecorator {
   {
     return (_value, context) => {
-      if (context.static || context.private) throw new Error(`hook decorators must decorate a public instance method (${String(context.name)})`);
+      if (context.private) throw new Error(`hook decorators must decorate a public method (${String(context.name)})`);
+      if (context.static) return staticHookDecorator(level, when, opts, location)(_value, context);
       pending.push({ kind: 'hook', level, when, options: opts, method: context.name, ...(location ? { location } : {}) });
     };
   }

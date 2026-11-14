@@ -1,3 +1,10 @@
+/**
+ * ADAPTER: Gherkin (.feature, .feature.md) via Cucumber's open-source parser and pickle compiler.
+ *
+ * This is the ONLY file in bddx that imports @cucumber/gherkin or @cucumber/messages. Everything it
+ * produces is our own model (ScenarioInstance). To replace the parser, write another SpecParser
+ * (see ../ports.ts) and register it; nothing else changes.
+ */
 import {
   AstBuilder,
   compile,
@@ -16,7 +23,7 @@ import {
   type Scenario,
   type Tag as GherkinTag,
 } from '@cucumber/messages';
-import { slugify } from './ids.js';
+import { slugify } from '../ids.js';
 import type {
   ExampleRef,
   FeatureInfo,
@@ -27,9 +34,10 @@ import type {
   StepInstance,
   StepKeywordType,
   Tag,
-} from './model.js';
-import { parseTag, tagsToMeta } from './tags.js';
-import { parseDataRef, type DataLoader } from './data/loader.js';
+} from '../model.js';
+import { parseTag, tagsToMeta } from '../tags.js';
+import { parseDataRef, type DataLoader } from '../data/loader.js';
+import type { SpecParser } from '../ports.js';
 
 export interface ParseOptions {
   /** Default Gherkin language when the file has no `# language:` header. Default 'en'. */
@@ -432,3 +440,10 @@ function toParseErrors(err: unknown, uri: string): ParseErrorInfo[] {
     return info;
   });
 }
+
+/** The default spec parser for Gherkin files. */
+export const cucumberGherkinParser: SpecParser = {
+  name: 'gherkin (cucumber)',
+  extensions: ['.feature', '.feature.md'],
+  parse: (source, uri, options) => parseSpecAsync(source, uri, options),
+};

@@ -86,3 +86,16 @@ so they cost nothing unless used.
 
 Ids are built from the scenario name BEFORE `<placeholder>` substitution and, for data rows, from the source row
 number BEFORE filtering. Inline outline rows keep `[<row index>]`; data rows use `[<source>#<row>]`.
+
+## ADR-014 Ports & adapters: bddx owns the architecture, Cucumber libraries are replaceable parts (2026-11-15)
+
+**Context.** The owner wants bddx to be its own framework (TestNG-style lifecycle, groups, dependencies), not a Cucumber
+derivative. bddx never used Cucumber's runner, but three Cucumber libraries were imported directly in core/runtime files.
+
+**Decision.** Define `SpecParser`, `TagExpressionEngine` and `StepExpressionEngine` interfaces; move every Cucumber import
+into `adapters/`. Gherkin stays the default spec format through `cucumberGherkinParser`; other formats (the parked
+code-linked Markdown specs) register as additional `SpecParser`s. Lifecycle names follow TestNG where it helps
+(`BeforeSuite`/`AfterSuite`), and hooks may be static methods at any level.
+
+**Consequences.** Any of the three libraries can be replaced without touching the runner. The Java port can implement
+the same ports with JVM libraries or its own parser. Small cost: one indirection per call.

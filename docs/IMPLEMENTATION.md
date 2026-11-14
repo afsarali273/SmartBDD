@@ -25,14 +25,31 @@ Phase 3 inserts a **Planner** between selection and execution (a graph of groups
 a **Scheduler** that hands ready instances to worker processes. `Executor.runScenario()` is the unit
 those workers will call, so keep it free of global state.
 
-## 2. Packages
+## 2. Own core, swappable third-party parts (ports & adapters)
+
+bddx's runner, hooks, context, DI, data, ids, events, reports and CLI are its own code. Third-party libraries are used
+only for three narrow jobs, each behind an interface bddx owns:
+
+| Port (interface) | Defined in | Default adapter | Library |
+| --- | --- | --- | --- |
+| `SpecParser` (file → `ScenarioInstance[]`) | `core/src/ports.ts` | `core/src/adapters/cucumber-gherkin.ts` | `@cucumber/gherkin`, `@cucumber/messages` |
+| `TagExpressionEngine` | `core/src/ports.ts` | `core/src/adapters/cucumber-tag-expressions.ts` | `@cucumber/tag-expressions` |
+| `StepExpressionEngine` (pattern → matcher, parameter types, snippets) | `runtime/src/ports.ts` | `runtime/src/adapters/cucumber-expressions.ts` | `@cucumber/cucumber-expressions` |
+
+Rule: only files under `adapters/` may import these libraries (`grep -rn "@cucumber/" packages/*/src | grep -v adapters/`
+must print nothing). New spec formats register with `registerSpecParser()` and are chosen by the longest matching file
+suffix (`specParserFor`); the CLI's folder globs come from `specFileGlobSuffix()`. Swap tag engine with
+`setTagExpressionEngine()`, step engine with `new SupportRegistry({ engine })`.
+
+## 2b. Packages
 
 ### 2.1 `@bddx/core` (no internal deps)
 
 | File | Responsibility |
 | --- | --- |
 | `model.ts` | The internal model: `ScenarioInstance`, `StepInstance`, `Tag`, `FeatureInfo`, `RuleRef`, `ExampleRef`, `Status`, `worstStatus()`, `toErrorInfo()` |
-| `gherkin.ts` | `parseSpec(source, uri, {language, format})` (sync) and `parseSpecAsync(…, {dataLoader})` (with `@data` expansion), using `@cucumber/gherkin`. Never throw on syntax/data errors; return `errors[]` with lines |
+| `ports.ts`, `spec-parsers.ts` | Interfaces + spec parser registry (`parseSpecFile`) |
+| `adapters/cucumber-gherkin.ts` | `parseSpec(source, uri, {language, format})` (sync) and `parseSpecAsync(…, {dataLoader})` (with `@data` expansion), using `@cucumber/gherkin`. Never throw on syntax/data errors; return `errors[]` with lines |
 | `data/loader.ts` | `@data` support: `parseDataRef`, `createFileDataLoader` (path resolution, providers by extension, `applyQuery` filters), built-in CSV/TSV/JSON/YAML/XLSX providers |
 | `data/csv.ts` | RFC 4180 CSV parser |
 | `tags.ts` | `parseTag()` (key/value split), `tagsToMeta()`, `compileTagExpression()` (wraps `@cucumber/tag-expressions`) |
@@ -40,7 +57,7 @@ those workers will call, so keep it free of global state.
 | `events.ts` | Event schema v1 (`BddxEvent` union), `EventBus`, `emptySummary()` |
 | `ids.ts` | `slugify()`, `createIdGenerator()` |
 
-**Parsing pipeline** (`gherkin.ts`):
+**Parsing pipeline** (`adapters/cucumber-gherkin.ts`):
 1. `Parser` + `AstBuilder` + token matcher (classic, or Markdown-with-Gherkin for `.md`) → `GherkinDocument`.
 2. `buildIndex()` walks the AST and records, per AST node id: step line/keyword/fromBackground, scenario + its
    rule, example rows (1-based index across all Examples blocks, row values), tag lines.
@@ -75,7 +92,8 @@ bare tags). Effective tags = feature + rule + scenario + examples, de-duplicated
 
 | File | Responsibility |
 | --- | --- |
-| `registry.ts` | `SupportRegistry`: steps, hooks, parameter types, matching, snippets. `getGlobalRegistry()` (stored on `globalThis[Symbol.for('bddx.registry.v1')]`), `resetGlobalRegistry()`, `callerLocation()` |
+| `ports.ts`, `adapters/cucumber-expressions.ts` | `StepExpressionEngine` interface + Cucumber Expressions adapter |
+| `registry.ts` | `SupportRegistry`: steps, hooks, parameter types (delegated to the engine), matching, snippets. `getGlobalRegistry()` (stored on `globalThis[Symbol.for('bddx.registry.v1')]`), `resetGlobalRegistry()`, `callerLocation()` |
 | `api.ts` | Global user API: `Given/When/Then/Step`, `BeforeAll/AfterAll`, `BeforeFeature/AfterFeature`, `BeforeRule/AfterRule`, `Before/After` (= `BeforeScenario/AfterScenario`), `BeforeStep/AfterStep`, `defineParameterType`, `setDefaultTimeout` |
 | `executor.ts` | `Executor` / `execute()`: the serial run loop, hooks, contexts, events, summary |
 | `context.ts` | `Store` (typed key/value) and `Scope` (store + LIFO `defer()` cleanups) |
@@ -113,7 +131,9 @@ the scenario scope closes. Run/feature/rule hooks cannot decorate methods (no pe
 **Trap:** never export a value named `then` from a package: its module namespace becomes thenable and
 `await import()` hangs (this happened with an early lowercase `then` decorator).
 
-**Hook levels implemented**: run, feature, rule, scenario, step. (Planned: worker, group in phase 3; attempt in phase 4.)
+**Hook levels implemented**: run (= suite: `BeforeAll`/`BeforeSuite`), feature, rule, scenario, step.
+Hooks can be functions, instance methods of `@Steps()` classes (scenario/step levels), or **static methods at any level**
+(`@BeforeSuite() static start(ctx)`), registered on class definition without `@Steps()`. (Planned: worker, group in phase 3; attempt in phase 4.)
 - Tag filters: feature hooks → feature tags; rule hooks → rule tags; scenario/step hooks → scenario tags.
 - Order: before-hooks by `order` asc then registration; after-hooks exactly reversed.
 - `alwaysRun` (before-hooks): run even if an earlier before-hook at the same level failed.

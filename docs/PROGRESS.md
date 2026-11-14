@@ -14,16 +14,16 @@ The single source of truth for "where are we". Update it at the end of every wor
 
 ## Next up
 
-1. **Gauge-style Markdown specs** (Phase 2): second parser in `core/src/markdown.ts`. `# Spec` = feature,
-   `## Scenario` = scenario, `* step` lines, Markdown tables as data tables / spec-level data table, `tags:` line.
-   Map to the same `ScenarioInstance`; choose by extension `.spec.md` (keep `.feature.md` = Cucumber MDG). ADR first.
-2. **Text-defined composite steps** (Gauge concepts / JBehave composites): `*.concept.md` files defining
+1. **Text-defined composite steps** (Gauge concepts / JBehave composites): `*.concept.md` files defining
    `# Login as <user>` followed by `* steps`; register as step definitions that run sub-steps (each sub-step
    reported as nested events → needs additive `parentStepId` on step events).
-3. **Call a scenario from a step**: `Given I run scenario "X" from "y.feature"` (runtime step that executes another
+2. **Call a scenario from a step**: `Given I run scenario "X" from "y.feature"` (runtime step that executes another
    instance's steps inline, sharing the scenario store).
-4. **Phase 2 gate**: same feature from inline Examples, CSV and XLSX with identical results (add to conformance).
-5. Then **Phase 3** (planner, groups, dependencies, workers): start with `packages/core/src/plan/` and `bddx plan`.
+3. **Phase 2 gate**: same feature from inline Examples, CSV and XLSX with identical results (add to conformance).
+4. Then **Phase 3** (planner, groups, dependencies, workers): start with `packages/core/src/plan/` and `bddx plan`.
+
+Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
+Do not start it without the owner.
 
 ## Known gaps / caveats
 
@@ -74,3 +74,14 @@ Worked directly in the user's folder via device shell.
 - deps: `yaml`, `exceljs` in core; root override uuid ^11.1.1 (ADR-012); lockfile regenerated; `npm audit` clean.
 - tests: decorators (5), cucumber-json (1), snippets + data CLI (2), data (9), conformance `data.feature`.
 - example: `checkout.feature` (class steps), `pricing-data.feature` (CSV + XLSX + qa profile), `data/make-xlsx.mjs`.
+
+### 2026-11-15: Session 2b (own architecture: ports + adapters, TestNG lifecycle names)
+
+- Commit `d66f13d` (Phase 1 complete + Phase 2 data core).
+- Ports & adapters (ADR-014): `core/src/ports.ts` (`SpecParser`, `TagExpressionEngine`), `core/src/spec-parsers.ts`
+  (registry by suffix, `parseSpecFile`, `specFileGlobSuffix`), `core/src/adapters/cucumber-gherkin.ts` (moved from
+  `gherkin.ts`), `core/src/adapters/cucumber-tag-expressions.ts`, `runtime/src/ports.ts` (`StepExpressionEngine`),
+  `runtime/src/adapters/cucumber-expressions.ts`; `SupportRegistry({ engine })`. CLI uses `parseSpecFile`.
+- Hooks: `BeforeSuite`/`AfterSuite` aliases; hook decorators on static methods for every level (`staticHookDecorator`).
+- Owner's code-linked Markdown idea captured in `docs/design/code-linked-markdown.md` (parked); Gauge-style Markdown
+  item removed from Phase 2.

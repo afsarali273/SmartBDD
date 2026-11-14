@@ -10,7 +10,8 @@ export {
   callerLocation,
   type StepDefinition,
   type MatchResult,
-  type ParameterTypeOptions,
 } from './registry.js';
+export * from './ports.js';
+export { createCucumberExpressionEngine } from './adapters/cucumber-expressions.js';
 export { Executor, execute, type ExecuteOptions, type ExecuteResult } from './executor.js';
 export { Steps, resolve, CONTEXT, type Constructor, type InjectToken, type MethodDecorator } from './decorators.js';
