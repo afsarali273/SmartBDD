@@ -1,0 +1,16 @@
+{
+  "scenarios": {
+    "statuses.feature::all-pass": "passed",
+    "statuses.feature::one-fails": "failed",
+    "statuses.feature::pending": "pending",
+    "statuses.feature::undefined": "undefined",
+    "statuses.feature::skipped-by-step": "skipped"
+  },
+  "steps": {
+    "statuses.feature::one-fails": ["passed", "failed", "skipped"],
+    "statuses.feature::pending": ["pending", "skipped"],
+    "statuses.feature::undefined": ["passed", "undefined", "skipped"],
+    "statuses.feature::skipped-by-step": ["skipped", "skipped"]
+  },
+  "success": false
+}

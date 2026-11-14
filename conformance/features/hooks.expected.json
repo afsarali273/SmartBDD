@@ -1,0 +1,25 @@
+{
+  "scenarios": {
+    "hooks.feature::first": "passed",
+    "hooks.feature::before-fails": "failed",
+    "hooks.feature::in-rule": "passed"
+  },
+  "steps": {
+    "hooks.feature::before-fails": ["skipped", "skipped"]
+  },
+  "trace": [
+    "beforeFeature",
+    "before first",
+    "background",
+    "first body",
+    "after first",
+    "before before fails",
+    "after before fails",
+    "before in rule",
+    "background",
+    "rule body",
+    "after in rule",
+    "afterFeature"
+  ],
+  "success": false
+}

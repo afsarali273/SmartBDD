@@ -1,0 +1,20 @@
+{
+  "name": "@bddx/cli",
+  "version": "0.1.0",
+  "description": "bddx command line: run, dry-run, snippets",
+  "type": "module",
+  "bin": { "bddx": "./dist/bin.js" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@bddx/core": "0.1.0",
+    "@bddx/runtime": "0.1.0",
+    "@bddx/reporters": "0.1.0",
+    "tinyglobby": "^0.2.17",
+    "tsx": "^4.23.15"
+  }
+}

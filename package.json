@@ -1,0 +1,29 @@
+{
+  "name": "bddx-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/runtime",
+    "packages/reporters",
+    "packages/cli"
+  ],
+  "scripts": {
+    "build": "tsc -b packages/core packages/runtime packages/reporters packages/cli",
+    "clean": "tsc -b --clean packages/core packages/runtime packages/reporters packages/cli",
+    "typecheck": "tsc -b packages/core packages/runtime packages/reporters packages/cli && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "example": "node packages/cli/dist/bin.js run --config examples/basic/bddx.config.ts",
+    "example:dry": "node packages/cli/dist/bin.js run --config examples/basic/bddx.config.ts --dry-run",
+    "verify": "npm run typecheck && npm test && npm run example"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "scenarios": {
+    "arguments.feature::data-table": "passed",
+    "arguments.feature::doc-string": "passed",
+    "arguments.feature::timing": "passed"
+  },
+  "success": true
+}

@@ -1,0 +1,8 @@
+{
+  "scenarios": {
+    "feature-hook-failure.feature::never-runs": "skipped",
+    "feature-hook-failure.feature::never-runs-either": "skipped"
+  },
+  "trace": [],
+  "success": false
+}

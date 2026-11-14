@@ -1,0 +1,15 @@
+{
+  "name": "@bddx/reporters",
+  "version": "0.1.0",
+  "description": "bddx reporters: console, NDJSON, JUnit XML",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@bddx/core": "0.1.0"
+  }
+}

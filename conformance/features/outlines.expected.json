@@ -1,0 +1,10 @@
+{
+  "scenarios": {
+    "fruit[1]": "passed",
+    "fruit[2]": "passed",
+    "fruit[3]": "passed",
+    "outlines.feature::no-id-tag[1]": "passed"
+  },
+  "trace": ["fruit=apple", "apple costs 1", "fruit=pear", "pear costs 2", "fruit=plum", "plum costs 3", "n=7"],
+  "success": true
+}
