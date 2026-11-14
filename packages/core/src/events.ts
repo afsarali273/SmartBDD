@@ -193,6 +193,8 @@ export interface Log extends Base {
   source?: 'user' | 'bddx';
   /** Structured payload (JSON-serialisable), shown by reporters on request. */
   data?: unknown;
+  /** An image or file logged together with the message (e.g. a screenshot). */
+  attachment?: { mediaType: string; encoding: 'base64'; body: string; name?: string; bytes: number };
 }
 
 export interface ScenarioFinished extends Base {

@@ -6,7 +6,12 @@ export default defineConfig({
   dataDir: 'data',
   tags: 'not @wip',
   params: { currency: 'SGD' },
-  reporters: ['console', ['ndjson', { outputFile: 'reports/events.ndjson' }], ['junit', { outputFile: 'reports/junit.xml' }]],
+  reporters: [
+    'console',
+    ['html', { outputFile: 'reports/report.html', title: 'Shop examples' }],
+    ['ndjson', { outputFile: 'reports/events.ndjson' }],
+    ['junit', { outputFile: 'reports/junit.xml' }],
+  ],
   profiles: {
     ci: { reporters: ['progress', 'junit:reports/junit.xml'], failFast: true },
     smoke: { tags: '@smoke' },

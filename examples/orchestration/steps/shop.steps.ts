@@ -1,11 +1,12 @@
 import { strict as assert } from 'node:assert';
 import { AfterGroup, BeforeGroup, Given, Then, When, log } from '@bddx/runtime';
+import { fakeScreenshot } from './fake-screenshot.js';
 
 /** A helper outside any step: the global `log` is attributed to the running scenario. */
 const paymentGateway = {
   async charge(amount: number, method: string) {
     log.debug('gateway request', { amount, method });
-    if (method === 'wallet') log.warn(`wallet payments are slow in this environment (${amount})`);
+    if (method === 'wallet') log.warn(`wallet payments are slow in this environment (${amount})`, fakeScreenshot('wallet-slow', [202, 138, 4]));
     await sleep(30);
   },
 };
@@ -41,6 +42,7 @@ When('I buy {string}', async (ctx, product: string) => {
   await sleep(50);
   orders.push(product);
   ctx.state.set('order', product);
+  ctx.log.image(`cart page after adding ${product}`, fakeScreenshot(product, [37, 99, 235]), { name: `cart-${product}.png` });
 });
 
 Then('the order is confirmed', (ctx) => {

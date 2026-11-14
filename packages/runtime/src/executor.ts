@@ -628,7 +628,7 @@ export class Executor {
     const ctx: RunContext = {
       run: scope.store,
       params: this.params,
-      log: createLogger((level, message, data) => {
+      log: createLogger((level, message, data, attachment) => {
         const cur = this.currentIds(ctx);
         bus.emit({
           type: 'log',
@@ -636,6 +636,7 @@ export class Executor {
           source: 'user',
           message,
           ...(data !== undefined ? { data } : {}),
+          ...(attachment ? { attachment } : {}),
           ...(cur.scenarioId ? { scenarioId: cur.scenarioId } : {}),
           ...(cur.stepId ? { stepId: cur.stepId } : {}),
         });

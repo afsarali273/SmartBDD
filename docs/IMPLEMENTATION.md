@@ -167,6 +167,7 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 | --- | --- |
 | `console` (`pretty`, `progress`) | Scenario lines, failing steps, failure list with first user stack frame, undefined-step snippets, summary. Options: `style`, `verbose`, `colors`, `write` |
 | `ndjson` | Every event as one JSON line. Option `outputFile` (default `reports/bddx.ndjson`) |
+| `html` | Single self-contained page: summary, groups, filters (status, log level, framework logs, search), scenarios with steps, errors, snippets, skip reasons, logs + images, attachments, run-level logs and hook failures. Options `outputFile` (default `reports/report.html`), `title`, `logLevel` |
 | `cucumber-json` (alias `json`) | Legacy Cucumber JSON (features → elements → steps, ns durations, embeddings) for existing dashboards. Option `outputFile` (default `reports/cucumber.json`) |
 | `junit` | One testsuite per feature. failed/undefined/ambiguous → `<failure>`, skipped/pending → `<skipped>`. Option `outputFile`, `suiteName` |
 
@@ -233,8 +234,10 @@ flags (`-t`, `-w`, `-D`, `--log-level`, `--fail-fast`, …). Orchestration facts
 
 ## 2e. Logging
 
-- API: `ctx.log(msg)` (= info), `ctx.log.debug|info|warn|error(msg, data?)`; global `log` from `@bddx/runtime` for code
-  outside steps (page objects, API clients). `runtime/src/logger.ts`.
+- API: `ctx.log(msg)` (= info), `ctx.log.debug|info|warn|error(msg, data?)`, `ctx.log.image(msg, bytes, {level,
+  mediaType, name})`; bytes (Uint8Array/Buffer) passed as `data` also become an image on that log line. Media type is
+  sniffed (png, jpeg, gif, webp, svg, pdf). Global `log` from `@bddx/runtime` for code outside steps (page objects,
+  API clients). `runtime/src/logger.ts`. Playwright: `ctx.log.image('after login', await page.screenshot())`.
 - Attribution: steps and hooks run inside `withLogger(ctx.log, …)` (AsyncLocalStorage), so the global `log` resolves to
   the scenario/step/hook running in the current async context, correct under concurrency. Outside: the run-level
   logger (`setFallbackLogger`), else warn/error go to stderr.
@@ -242,9 +245,18 @@ flags (`-t`, `-w`, `-D`, `--log-level`, `--fail-fast`, …). Orchestration facts
   `{name, message, stack}`. The framework emits `source:'bddx'` debug diagnostics (plan summary, `start <id> on wN after
   … holding …`, `skip <id>: reason`). The CLI writes its own pre-run diagnostics (config, --set, counts, support code) to
   stderr as `[bddx:debug]` at `--log-level debug`.
-- Display: console reporters show logs at or above `logLevel` (default `warn`; `silent` hides all). Scenario logs are
+- Log events may carry `attachment {mediaType, encoding:'base64', body, name?, bytes}` (the image).
+- Display: console reporters show logs at or above `logLevel` (default `info`; `silent` hides all); image logs are
+  marked `[🖼 image: name]`. Scenario logs are
   buffered and printed under the scenario's result line (stable with concurrency); run-level logs print immediately.
   NDJSON always contains every log at every level.
+- File reports (`reporters/src/logs.ts`: `LogIndex`, `formatLogLine`), each with its own `logLevel` option:
+  | Reporter | Where logs go | Default level | Framework logs |
+  | --- | --- | --- | --- |
+  | `html` | under each step / scenario, images inline, level dropdown + search in the page | debug (page shows info+) | yes, toggle |
+  | `junit` | `<system-out>` (debug/info), `<system-err>` (warn/error), prefixed by step text, CDATA-safe | info | no |
+  | `cucumber-json` | step `output` lines; log images + attachments as step `embeddings`; hook logs in `before[].output` | info | no |
+  | `ndjson` | every event | all | yes |
 
 ## 3. Event stream (schema v1)
 

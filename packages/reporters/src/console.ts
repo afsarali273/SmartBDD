@@ -19,7 +19,7 @@ export interface ConsoleReporterOptions {
   verbose?: boolean;
   colors?: boolean;
   write?: (text: string) => void;
-  /** Show logs at or above this level: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. */
+  /** Show logs at or above this level: 'debug' | 'info' (default) | 'warn' | 'error' | 'silent'. */
   logLevel?: LogLevel | 'silent';
 }
 
@@ -33,7 +33,7 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
   const c = (status: Status, text: string) => (useColor ? `\x1b[${COLOR[status]}m${text}\x1b[0m` : text);
   const dim = (text: string) => (useColor ? `\x1b[2m${text}\x1b[0m` : text);
   const style = opts.style ?? 'pretty';
-  const threshold = opts.logLevel ?? 'warn';
+  const threshold = opts.logLevel ?? 'info';
   const scenarioLogs = new Map<string, Log[]>();
   const fmtLog = (l: Log, indent: string) => {
     const level = l.level ?? 'info';
@@ -44,7 +44,8 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
       const json = JSON.stringify(l.data);
       data = ` ${dim(json && json.length > 300 ? `${json.slice(0, 300)}…` : String(json))}`;
     }
-    return `${indent}${head} ${l.message.split('\n').join(`\n${indent}  `)}${data}\n`;
+    const att = l.attachment ? dim(` [${l.attachment.mediaType.startsWith('image/') ? '🖼 image' : '📎 file'}: ${l.attachment.name ?? l.attachment.mediaType}]`) : '';
+    return `${indent}${head} ${l.message.split('\n').join(`\n${indent}  `)}${data}${att}\n`;
   };
 
   const plan = new Map<string, PlannedScenario>();

@@ -56,6 +56,7 @@ file is self-contained.
 - [x] `defaultMode` / `groups.default` for ungrouped scenarios (implicit group: scheduling only)
 - [x] `--set path=value` overrides for any config option
 - [x] Levelled logging (`ctx.log.*`, global `log` via AsyncLocalStorage, `--log-level`, framework diagnostics)
+- [x] Logs with images (`ctx.log.image`, bytes as data); logs in HTML / JUnit / Cucumber JSON reports
 
 Proposed config:
 
@@ -98,7 +99,8 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 
 ## Phase 5: Reporting + DX
 
-- [ ] HTML report (single file): execution graph, timeline per worker, attempts, attachments
+- [x] HTML report v1 (single file): summary, groups, filters, steps, logs with images, attachments, errors (`html` reporter)
+- [ ] HTML report v2: execution graph, timeline per worker, attempts, history
 - [ ] Living documentation view (folder tree = requirements; README.md per folder)
 - [ ] History store + flakiness score
 - [ ] Cucumber Messages adapter (ADR-007)

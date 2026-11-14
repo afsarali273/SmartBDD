@@ -17,5 +17,10 @@ export default defineConfig({
     payments: { mode: 'serial', dependsOn: ['setup'], locks: ['payments-db'] },
     reports: { dependsOn: ['checkout', 'payments'], onDependencyFailure: 'run' },
   },
-  reporters: ['console', ['ndjson', { outputFile: 'reports/events.ndjson' }]],
+  reporters: [
+    'console',
+    ['html', { outputFile: 'reports/report.html', title: 'Orchestration demo' }],
+    ['junit', { outputFile: 'reports/junit.xml' }],
+    ['ndjson', { outputFile: 'reports/events.ndjson' }],
+  ],
 });

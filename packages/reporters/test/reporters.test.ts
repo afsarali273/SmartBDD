@@ -105,12 +105,16 @@ describe('console reporter log levels', () => {
     rep.onEvent({ ts: 0, type: 'scenarioFinished', scenarioId: 's', attempt: 1, status: 'passed', durationMs: 1 });
     return out;
   };
-  it('defaults to warn and prints scenario logs under the scenario', () => {
+  it('defaults to info and prints scenario logs under the scenario', () => {
     const out = logEvents({});
     expect(out).toContain('✔ S');
     expect(out).toContain('      [warn] careful');
+    expect(out).toContain('[info] run-level info');
     expect(out).not.toContain('dbg');
-    expect(out).not.toContain('run-level info');
+    expect(out).not.toContain('start s on w1');
+  });
+  it('warn hides info', () => {
+    expect(logEvents({ logLevel: 'warn' })).not.toContain('run-level info');
   });
   it('debug shows everything, framework logs tagged bddx:debug, data inline', () => {
     const out = logEvents({ logLevel: 'debug' });
@@ -120,5 +124,82 @@ describe('console reporter log levels', () => {
   });
   it('silent hides logs', () => {
     expect(logEvents({ logLevel: 'silent' })).not.toContain('careful');
+  });
+});
+
+describe('logs and images in file reports', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+
+  async function richRun(...reporters: ReturnType<typeof consoleReporter>[]) {
+    const r = new SupportRegistry();
+    r.defineStep('ok <x>', () => {});
+    r.defineStep('shop', (c: StepContext) => {
+      c.log.info('cart <ready>', { items: 2 });
+      c.log.debug('internal');
+      c.log.image('cart page', PNG, { name: 'cart.png' });
+      c.log.warn('slow ]]> response', PNG);
+      c.attach('{"a":1}', 'application/json', 'payload');
+    });
+    r.defineStep('boom', () => {
+      throw new Error('kaput & <gone>');
+    });
+    r.defineHook('scenario', 'before', {}, (c) => c.log.info(`hook for ${c.scenario.name}`));
+    const bus = new EventBus();
+    for (const rep of reporters) bus.on((e) => rep.onEvent(e));
+    const src = 'Feature: Rich\n  Scenario: buy\n    Given shop\n  Scenario: broken\n    Given boom\n';
+    await new Executor({ registry: r, bus }).execute(parseSpec(src, 'rich.feature').scenarios);
+    await bus.flush();
+    for (const rep of reporters) await rep.close?.();
+  }
+
+  it('HTML: self-contained page with logs (levels), log images, attachments, errors, escaping', async () => {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html-'));
+    const file = join(dir, 'r.html');
+    await richRun(htmlReporter({ outputFile: file, title: 'My <Run>' }));
+    const html = readFileSync(file, 'utf8');
+    expect(html).toContain('<title>My &lt;Run&gt;</title>');
+    expect(html).toContain('FAILED');
+    expect(html).toContain('<span class="msg">cart &lt;ready&gt;</span>');
+    expect(html).toContain('class="log lv-debug"');
+    expect(html).toContain('class="log lv-warn"');
+    expect(html).toMatch(/class="logimg"[^>]*><img[^>]*alt="cart.png" src="data:image\/png;base64,/);
+    expect(html).toContain('📎 payload');
+    expect(html).toContain('kaput &amp; &lt;gone&gt;');
+    expect(html).toContain('hook for buy'); // scenario-level (hook) log
+    expect(html).not.toMatch(/<script[^>]+src=/); // no external assets
+  });
+
+  it('JUnit: logs in system-out / system-err, CDATA-safe, step names prefixed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-junit2-'));
+    const file = join(dir, 'j.xml');
+    await richRun(junitReporter({ outputFile: file }));
+    const xml = readFileSync(file, 'utf8');
+    expect(xml).toContain('<system-out><![CDATA[[info] hook for buy\nGiven shop: [info] cart <ready> {"items":2}\nGiven shop: [info] cart page [image: cart.png, 29 B]]]></system-out>');
+    expect(xml).toContain('<system-err><![CDATA[Given shop: [warn] slow ]]]]><![CDATA[> response [image: image/png, 29 B]]]></system-err>');
+    expect(xml).not.toContain('[debug] internal'); // debug below default 'info'
+  });
+
+  it('Cucumber JSON: step output lines, log images as embeddings, hook logs in before', async () => {
+    const { cucumberJsonReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-cj2-'));
+    const file = join(dir, 'c.json');
+    await richRun(cucumberJsonReporter({ outputFile: file, logLevel: 'debug' }));
+    const [feature] = JSON.parse(readFileSync(file, 'utf8')) as Array<{
+      elements: Array<{ before?: Array<{ output: string[] }>; steps: Array<{ output?: string[]; embeddings?: Array<{ mime_type: string; name?: string }> }> }>;
+    }>;
+    const buy = feature!.elements[0]!;
+    expect(buy.before![0]!.output).toEqual(['[info] hook for buy']);
+    expect(buy.steps[0]!.output).toEqual([
+      '[info] cart <ready> {"items":2}',
+      '[debug] internal',
+      '[info] cart page [image: cart.png, 29 B]',
+      '[warn] slow ]]> response [image: image/png, 29 B]',
+    ]);
+    expect(buy.steps[0]!.embeddings!.map((e) => `${e.mime_type}:${e.name}`)).toEqual([
+      'application/json:payload',
+      'image/png:cart.png',
+      'image/png:slow ]]> response',
+    ]);
   });
 });

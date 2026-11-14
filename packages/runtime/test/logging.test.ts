@@ -62,3 +62,32 @@ describe('levelled logging', () => {
     expect(diag).toContain('start d.feature::b on w1 after a');
   });
 });
+
+describe('logging images', () => {
+  it('ctx.log.image and bytes-as-data attach an image to the log line; media type sniffed', async () => {
+    const { sniffMediaType } = await import('@bddx/runtime');
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    const jpg = Buffer.from('ffd8ffe0', 'hex');
+    expect(sniffMediaType(png)).toBe('image/png');
+    expect(sniffMediaType(jpg)).toBe('image/jpeg');
+    expect(sniffMediaType(Buffer.from('<svg xmlns="x"/>'))).toBe('image/svg+xml');
+    expect(sniffMediaType(Buffer.from('hello'))).toBe('application/octet-stream');
+
+    const r = new SupportRegistry();
+    r.defineStep('snap', (ctx: StepContext) => {
+      ctx.log.image('after login', png, { name: 'login.png' });
+      ctx.log.warn('odd layout', jpg);
+      log.image('from helper', png, { level: 'debug', mediaType: 'image/png' });
+    });
+    const bus = new EventBus({ keepHistory: true });
+    await new Executor({ registry: r, bus }).execute(parseSpec('Feature: I\n  Scenario: s\n    Given snap\n', 'i.feature').scenarios);
+    const logs = bus.history!.filter((e): e is Log => e.type === 'log' && e.source === 'user');
+    expect(logs.map((l) => [l.level, l.message, l.attachment?.mediaType, l.attachment?.name, l.attachment?.bytes])).toEqual([
+      ['info', 'after login', 'image/png', 'login.png', 8],
+      ['warn', 'odd layout', 'image/jpeg', undefined, 4],
+      ['debug', 'from helper', 'image/png', undefined, 8],
+    ]);
+    expect(logs[0]!.attachment!.body).toBe(png.toString('base64'));
+    expect(logs.every((l) => l.data === undefined && l.stepId)).toBe(true);
+  });
+});

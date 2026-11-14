@@ -52,7 +52,7 @@ export interface BddxOptions {
   groups?: Record<string, GroupConfig>;
   /** How ungrouped scenarios run: 'parallel' | 'serial' | 'exclusive'. Shorthand for groups.default.mode. */
   defaultMode?: GroupMode;
-  /** Console log level: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. Events always contain every log. */
+  /** Console log level: 'debug' | 'info' (default) | 'warn' | 'error' | 'silent'. Events always contain every log; file reports have their own `logLevel` option. */
   logLevel?: LogLevel | 'silent';
 }
 

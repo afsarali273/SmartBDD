@@ -125,3 +125,12 @@ quiet; `--log-level debug` turns on user debug logs plus framework scheduling di
 Every config option is reachable from the CLI via `--set path=value` with JSON-typed values (CI-friendly, no file edits),
 validated against `OPTION_KEYS`. Ungrouped scenarios get a group only when asked (`defaultMode` / `groups.default`),
 keeping the Phase 3 default (unconstrained) unchanged.
+
+## ADR-018 Logs in every report; images ride on log lines; HTML report v1 (2026-11-15)
+
+Owner wants logs (with screenshots) in reports and console. A log event can carry one attachment (base64) so an image
+is shown exactly where it was logged. Each file reporter filters logs with its own `logLevel` (JUnit/Cucumber JSON
+default info, HTML embeds debug and filters in the page). Framework diagnostics stay out of CI formats (JUnit, Cucumber
+JSON) to keep them clean; HTML keeps them behind a toggle. Console default changed from warn to info so user logs are
+visible without flags. HTML report v1 is server-rendered, dependency-free, one file (shareable as a CI artifact);
+v2 (graph/timeline/history) stays in Phase 5.

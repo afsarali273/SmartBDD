@@ -7,8 +7,8 @@ The single source of truth for "where are we". Update it at the end of every wor
 - **Phases 0–1:** done. **Phase 2:** data core done; text composite steps, call-a-scenario, Phase 2 gate remain.
 - **Phase 3:** planner, `bddx plan`/`--explain`, dependency closure, in-process scheduler (workers, priorities, locks,
   serial/parallel/exclusive groups, group caps), group hooks/stores, hard/soft deps, exports, orchestration example. Gate passed.
-  Also: `defaultMode`, `--set` overrides, levelled logging. Remaining: worker processes, `@requires`, timeline view.
-- **Health:** `npm run verify` green on the user's Mac (102 tests + both examples).
+  Also: `defaultMode`, `--set` overrides, levelled logging with images, HTML report v1, logs in JUnit/Cucumber JSON. Remaining: worker processes, `@requires`, timeline view.
+- **Health:** `npm run verify` green on the user's Mac (107 tests + both examples).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 
@@ -116,3 +116,15 @@ Worked directly in the user's folder via device shell.
 - example: orchestration steps log at info/debug/warn incl. a helper using global `log`.
 - tests: logging (3), console levels (3), defaultMode (3 planner + 1 scheduler), CLI `--set`/`--log-level` (2) +
   `applySetOverrides` unit (1); two older tests now ignore framework logs. 102 total.
+
+### 2026-11-15: Session 3c (logs in reports, images, HTML report)
+
+- Owner: logs must be in reports and console, with screenshots/images.
+- core: log event `attachment`. runtime: `ctx.log.image`, bytes-as-data → image, `sniffMediaType`, global `log.image`.
+- reporters: `logs.ts` (`LogIndex` with framework filter, `formatLogLine`), new `html.ts` reporter (`html`), JUnit
+  `<system-out>/<system-err>` (CDATA-safe), Cucumber JSON step `output` + log-image embeddings + `before` hook output,
+  console default level info + image marker.
+- examples: both configs write `reports/report.html`; orchestration logs generated PNG "screenshots"
+  (`steps/fake-screenshot.ts`, no browser needed).
+- Verified the HTML visually (headless Chrome screenshots: images inline, level filter, framework toggle).
+- tests: +5 (107).

@@ -127,7 +127,10 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
   });
 
   it('--log-level controls console logs; debug adds CLI and scheduler diagnostics', () => {
-    const quiet = bddxIn(orchestration, 'run', '--name', 'Wallet');
+    const normal = bddxIn(orchestration, 'run', '--name', 'Wallet');
+    expect(normal.out).toContain('[info] paying 5 by wallet'); // default console level: info
+    expect(normal.out).not.toContain('[debug]');
+    const quiet = bddxIn(orchestration, 'run', '--name', 'Wallet', '--log-level', 'warn');
     expect(quiet.out).toContain('[warn] wallet payments are slow');
     expect(quiet.out).not.toContain('[info] paying');
     const loud = bddxIn(orchestration, 'run', '--name', 'Wallet', '--log-level', 'debug');

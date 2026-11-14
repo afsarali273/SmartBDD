@@ -16,4 +16,4 @@ export { createCucumberExpressionEngine } from './adapters/cucumber-expressions.
 export { Executor, execute, type ExecuteOptions, type ExecuteResult } from './executor.js';
 export { Steps, resolve, CONTEXT, type Constructor, type InjectToken, type MethodDecorator } from './decorators.js';
 export { schedule, type SchedulerCallbacks, type ScheduleOptions } from './scheduler.js';
-export { log, createLogger, withLogger, type Logger, type LogFn } from './logger.js';
+export { log, createLogger, withLogger, sniffMediaType, type Logger, type LogFn, type LogImageOptions } from './logger.js';

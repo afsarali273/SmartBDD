@@ -122,8 +122,13 @@ ctx.log.info('paying', { amount });   // in steps/hooks
 log.warn('gateway slow');             // anywhere, e.g. page objects / API clients
 ```
 
-The console shows `warn` and above by default; `--log-level debug` also shows framework scheduling diagnostics.
-Every level is always in the NDJSON event log.
+Screenshots and images ride on log lines: `ctx.log.image('after login', await page.screenshot())`, or pass bytes as data
+(`log.warn('layout broken', png)`).
+
+The console shows `info` and above by default; `--log-level debug` also shows framework scheduling diagnostics.
+Logs (and their images) appear in every report: the HTML report (`html` reporter: one self-contained file with filters,
+steps, logs, screenshots, attachments), JUnit `<system-out>`/`<system-err>`, Cucumber JSON step `output`/`embeddings`,
+and NDJSON (everything).
 
 `bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
 
@@ -156,7 +161,7 @@ Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed
 | --- | --- |
 | `packages/core` | Spec model, Gherkin compiler, tags, selection, event schema |
 | `packages/runtime` | Step registry, hooks, scoped context, executor, global API |
-| `packages/reporters` | console, NDJSON, JUnit XML |
+| `packages/reporters` | console, HTML, NDJSON, JUnit XML, Cucumber JSON |
 | `packages/cli` | `bddx` command, config loading, file discovery |
 | `conformance` | Language-neutral features + expected results (Java must pass these too) |
 | `examples/basic` | Small runnable project |

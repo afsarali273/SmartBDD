@@ -2,10 +2,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BddxEvent, ErrorInfo, PlannedScenario, ScenarioFinished, StepFinished } from '@bddx/core';
 import type { Reporter, ReporterOptions } from './types.js';
+import { formatLogLine, LogIndex, type ReportLogLevel } from './logs.js';
 
 /**
  * JUnit XML for CI systems. One <testsuite> per feature, one <testcase> per scenario.
  * failed / undefined / ambiguous -> <failure>; skipped / pending -> <skipped>.
+ * Logs at or above `logLevel` (default 'info') go to <system-out> (debug/info) and <system-err> (warn/error),
+ * which CI servers (Jenkins, GitLab, Azure DevOps…) show next to each test.
  */
 export function junitReporter(raw: ReporterOptions = {}): Reporter {
   const outputFile = String(raw['outputFile'] ?? 'reports/junit.xml');
@@ -13,6 +16,7 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
   const plan: PlannedScenario[] = [];
   const results = new Map<string, ScenarioFinished>();
   const failingStep = new Map<string, StepFinished>();
+  const logs = new LogIndex((raw['logLevel'] as ReportLogLevel | undefined) ?? 'info');
   let xml = '';
 
   return {
@@ -23,7 +27,8 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
         failingStep.set(e.scenarioId, e);
       }
       if (e.type === 'scenarioFinished') results.set(e.scenarioId, e);
-      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs);
+      if (e.type === 'log') logs.add(e);
+      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs, logs);
     },
     async close() {
       if (!xml) return;
@@ -39,6 +44,7 @@ export function render(
   results: Map<string, ScenarioFinished>,
   failingStep: Map<string, StepFinished>,
   durationMs: number,
+  logs: LogIndex = new LogIndex('silent'),
 ): string {
   const byFeature = new Map<string, PlannedScenario[]>();
   for (const s of plan) {
@@ -71,6 +77,19 @@ export function render(
         sSkip++;
         body = `\n      <skipped message="${esc(r?.reason ?? status)}"/>\n    `;
       }
+      const stepText = new Map(s.steps.map((st) => [st.id, `${st.keyword}${st.text}`]));
+      const lines = (levels: string[]) =>
+        logs
+          .all(s.id)
+          .filter((l) => levels.includes(l.level ?? 'info'))
+          .map((l) => `${l.stepId ? `${stepText.get(l.stepId) ?? l.stepId}: ` : ''}${formatLogLine(l)}`);
+      const out = lines(['debug', 'info']);
+      const err = lines(['warn', 'error']);
+      if (out.length || err.length) {
+        if (!body) body = '\n    ';
+        if (out.length) body += `  <system-out>${cdata(out.join('\n'))}</system-out>\n    `;
+        if (err.length) body += `  <system-err>${cdata(err.join('\n'))}</system-err>\n    `;
+      }
       return `    <testcase name="${esc(s.name)}" classname="${esc(s.featureName)}" file="${esc(uri)}" line="${s.line}" time="${time.toFixed(3)}">${body}</testcase>`;
     });
     tests += scenarios.length;
@@ -81,6 +100,13 @@ export function render(
     );
   }
   return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${esc(suiteName)}" tests="${tests}" failures="${failures}" skipped="${skipped}" errors="0" time="${(durationMs / 1000).toFixed(3)}">\n${suites.join('\n')}\n</testsuites>\n`;
+}
+
+/** CDATA section; splits any "]]>" so the XML stays valid. Control characters are removed. */
+function cdata(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  const clean = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  return `<![CDATA[${clean.split(']]>').join(']]]]><![CDATA[>')}]]>`;
 }
 
 function firstLine(s: string): string {

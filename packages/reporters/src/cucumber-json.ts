@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Attachment, BddxEvent, PlannedScenario, ScenarioFinished, StepFinished } from '@bddx/core';
 import type { Reporter, ReporterOptions } from './types.js';
+import { formatLogLine, LogIndex, type ReportLogLevel } from './logs.js';
 
 /**
  * Cucumber JSON (the legacy `--format json` shape), for dashboards and plugins that
@@ -14,6 +15,7 @@ export function cucumberJsonReporter(raw: ReporterOptions = {}): Reporter {
   const steps = new Map<string, StepFinished>();
   const attachments = new Map<string, Attachment[]>();
   const scenarios = new Map<string, ScenarioFinished>();
+  const logs = new LogIndex((raw['logLevel'] as ReportLogLevel | undefined) ?? 'info');
   let json = '';
 
   return {
@@ -35,8 +37,11 @@ export function cucumberJsonReporter(raw: ReporterOptions = {}): Reporter {
         case 'scenarioFinished':
           scenarios.set(e.scenarioId, e);
           break;
+        case 'log':
+          logs.add(e);
+          break;
         case 'runFinished':
-          json = JSON.stringify(render(plan, steps, attachments, scenarios), null, 2);
+          json = JSON.stringify(render(plan, steps, attachments, scenarios, logs), null, 2);
           break;
         default:
           break;
@@ -57,6 +62,7 @@ export function render(
   steps: Map<string, StepFinished>,
   attachments: Map<string, Attachment[]>,
   scenarios: Map<string, ScenarioFinished>,
+  logs: LogIndex = new LogIndex('silent'),
 ): unknown[] {
   const features = new Map<string, { feature: Record<string, unknown>; elements: unknown[] }>();
   for (const s of plan) {
@@ -87,6 +93,17 @@ export function render(
       line: s.line,
       type: 'scenario',
       tags: s.tags.filter((t) => !featureTags.has(t)).map((name) => ({ name, line: s.line - 1 })),
+      ...(logs.scenarioOnly(s.id).length
+        ? {
+            before: [
+              {
+                match: { location: 'bddx: scenario logs (hooks)' },
+                result: { status: 'passed', duration: 0 },
+                output: logs.scenarioOnly(s.id).map((l) => formatLogLine(l)),
+              },
+            ],
+          }
+        : {}),
       steps: s.steps.map((st) => {
         const r = steps.get(`${s.id}|${st.id}`);
         const status = r?.status ?? 'skipped';
@@ -100,14 +117,20 @@ export function render(
           match: { location: r?.definition?.location ?? r?.definition?.pattern ?? 'undefined' },
           result: res,
         };
-        const att = attachments.get(`${s.id}|${st.id}`);
-        if (att?.length) {
-          step['embeddings'] = att.map((a) => ({
+        const att = attachments.get(`${s.id}|${st.id}`) ?? [];
+        const stepLogs = logs.forStep(s.id, st.id);
+        const embeddings = [
+          ...att.map((a) => ({
             mime_type: a.mediaType,
             data: a.encoding === 'base64' ? a.body : Buffer.from(a.body, 'utf8').toString('base64'),
             ...(a.name ? { name: a.name } : {}),
-          }));
-        }
+          })),
+          ...stepLogs.flatMap((l) =>
+            l.attachment ? [{ mime_type: l.attachment.mediaType, data: l.attachment.body, name: l.attachment.name ?? l.message }] : [],
+          ),
+        ];
+        if (embeddings.length) step['embeddings'] = embeddings;
+        if (stepLogs.length) step['output'] = stepLogs.map((l) => formatLogLine(l));
         return step;
       }),
     });
