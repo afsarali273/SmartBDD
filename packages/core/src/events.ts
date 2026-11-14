@@ -42,13 +42,16 @@ export interface SpecParsed extends Base {
 
 export interface PlannedScenario {
   id: string;
+  keyword?: string;
   name: string;
+  description?: string;
+  feature?: { name: string; description: string; line: number; tags: string[]; language: string };
   uri: string;
   line: number;
   featureName: string;
   ruleName?: string;
   /** Present for Scenario Outline rows. */
-  example?: { name: string; index: number; values: Record<string, string> };
+  example?: { name: string; index: number; values: Record<string, string>; source?: string; sourceRow?: number };
   tags: string[];
   steps: Array<{ id: string; keyword: string; text: string; line: number }>;
 }

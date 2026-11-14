@@ -56,3 +56,33 @@ The global registry lives on `globalThis` under a `Symbol.for` key so duplicate 
 
 Pending, undefined and ambiguous scenarios fail the run unless `strict: false` / `--no-strict`, so a green CI run
 means every step really ran.
+
+## ADR-010 Decorators are the normal API functions; `@Steps()` required (2026-11-15)
+
+`Given('x', fn)` registers a function step; `Given('x')` returns a TC39 method decorator. Same for scenario/step
+hooks. One vocabulary for both styles, and it maps to Java annotations. Standard (TC39) decorators, not
+`experimentalDecorators`: method decorators cannot see their class, so `@Steps()` collects them. DI uses
+`static inject = [...]` (no reflection metadata, no `emitDecoratorMetadata`). Lowercase decorator names were tried
+and dropped: an export named `then` makes the module thenable and `await import()` hangs.
+
+Vite 8 (vitest 5) transpiles with oxc, which does not lower TC39 decorators yet; `vitest.config.ts` pre-compiles
+decorator files with the TypeScript compiler. tsx (esbuild) at runtime handles them natively.
+
+## ADR-011 @data expansion by AST injection (2026-11-15)
+
+Data rows are injected into the Gherkin AST as Examples rows before Cucumber's pickle compiler runs, so placeholders in
+step text, data tables and doc strings behave exactly like normal outlines and the compiler stays unmodified.
+Loading is async (`parseSpecAsync`); the sync `parseSpec` flags `@data` scenarios as errors rather than running
+them with unresolved placeholders. Missing data is an error, never a silent zero-row pass.
+
+## ADR-012 exceljs for XLSX, uuid forced to 11 (2026-11-15)
+
+SheetJS's npm package is unmaintained (the maintained build is off-registry); exceljs is MIT and on npm.
+exceljs 4.4 depends on uuid 8 (advisory GHSA-w5hq-g745-h8pq); root `overrides` pins uuid ^11.1.1, verified
+by the XLSX tests. Remove the override when exceljs updates. XLSX/YAML are loaded with dynamic `import()`
+so they cost nothing unless used.
+
+## ADR-013 Stable ids use the template name (supersedes part of ADR-006) (2026-11-15)
+
+Ids are built from the scenario name BEFORE `<placeholder>` substitution and, for data rows, from the source row
+number BEFORE filtering. Inline outline rows keep `[<row index>]`; data rows use `[<source>#<row>]`.

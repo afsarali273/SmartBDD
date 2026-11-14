@@ -36,6 +36,11 @@ export interface BddxOptions {
   strict?: boolean;
   /** Default Gherkin language. Default 'en'. */
   language?: string;
+  /**
+   * Folder for `@data:` files, relative to the config folder. Default: the config folder.
+   * With --profile <p>, `<dataDir>/<p>/<file>` is tried first.
+   */
+  dataDir?: string;
 }
 
 export interface BddxConfig extends BddxOptions {

@@ -76,6 +76,9 @@ export interface ExampleRef {
   index: number;
   line: number;
   values: Record<string, string>;
+  /** For rows injected from `@data:` — the source (file[#selector]) and its 1-based data row. */
+  source?: string;
+  sourceRow?: number;
 }
 
 export interface FeatureInfo {
@@ -99,6 +102,8 @@ export interface ScenarioInstance {
   id: string;
   /** Original pickle id from the Gherkin compiler (unique per parse, not stable). */
   pickleId: string;
+  /** Keyword as written: 'Scenario', 'Example', 'Scenario Outline', localised equivalents. */
+  keyword: string;
   name: string;
   description: string;
   uri: string;

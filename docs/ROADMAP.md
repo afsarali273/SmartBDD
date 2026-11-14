@@ -26,19 +26,21 @@ file is self-contained.
 - [x] CLI: run, list, --dry-run with snippets, -t, --name, file:line, -p, -D, -f, --fail-fast, --no-strict
 - [x] Config file (ts/js/json) with profiles
 - [x] Example project
-- [ ] Class-based steps with decorators (`@Given`) + a small DI container (constructor injection, per-scenario instances)
-- [ ] Cucumber JSON reporter (for existing dashboards)
-- [ ] `bddx snippets` command (print snippets for undefined steps only)
+- [x] Class-based steps with decorators (`@Steps()` + `@Given`…) + DI container (`static inject`, per-scenario instances, `dispose()`)
+- [x] Cucumber JSON reporter (`cucumber-json` / `json`)
+- [x] `bddx snippets` command
 - [ ] Gate: a real project runs end to end, serially
 
-## Phase 2: Data-driven specs
+## Phase 2: Data-driven specs (in progress)
 
-- [ ] `DataProvider` interface + registry in core (`load(source, options) → rows[]`)
-- [ ] `@data:<file>[#sheet][?where=col=val&rows=1-5]` tag on Scenario/Outline/Examples → expands into instances
-- [ ] Loaders: CSV (built-in parser), JSON, YAML, XLSX (`exceljs` or `xlsx`; record ADR)
-- [ ] `@dataField:<featureName>=<sourceColumn>` column mapping
-- [ ] Per-profile data folders (`data/{profile}/users.csv`)
-- [ ] Stable ids for data rows: `<id>[<source>#<row>]`
+- [x] `DataLoader` / `DataProvider` interfaces in core (`createFileDataLoader`, extra providers by extension)
+- [x] `@data:<file>[#selector][?col=val&rows=1-3,7]` on Scenario/Outline (adds Examples) or Examples (fills body)
+- [x] Loaders: CSV, TSV (built-in RFC 4180 parser), JSON (dotted selector), YAML, XLSX (exceljs, sheet selector)
+- [x] `@dataField:<placeholder>=<column>` mapping (feature/rule/scenario/examples)
+- [x] `dataDir` config + per-profile override (`<dataDir>/<profile>/<file>`)
+- [x] Stable ids for data rows: `<base>[<source>#<row>]`, base from the TEMPLATE name
+- [x] Data errors = parse errors on the tag line (missing file/column, bad filter, no rows); scenario dropped, exit 2
+- [ ] Data providers for SQL queries and HTTP endpoints (plugin API, phase 6)
 - [ ] Gauge-style Markdown spec format (headings = scenarios, `*` = steps, tables) as a second parser
 - [ ] Text-defined composite steps (`.steps.md` or `.concept` files)
 - [ ] Call a scenario from a step: `Given I run scenario "X" from "y.feature"`

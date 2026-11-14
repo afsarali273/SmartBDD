@@ -13,8 +13,14 @@ const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
 const project = fileURLToPath(new URL('./fixtures/project/', import.meta.url));
 const built = existsSync(bin);
 
+const dataProject = fileURLToPath(new URL('./fixtures/data-project/', import.meta.url));
+
 function bddx(...args: string[]) {
-  const r = spawnSync(process.execPath, [bin, ...args], { cwd: project, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
+  return bddxIn(project, ...args);
+}
+
+function bddxIn(cwd: string, ...args: string[]) {
+  const r = spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -47,6 +53,14 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(r.out).toContain(`Given('something nobody wrote', async (ctx) => {`);
   });
 
+  it('snippets prints code for undefined steps with their locations', () => {
+    const r = bddx('snippets');
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('// 1 undefined step pattern(s)');
+    expect(r.out).toContain('// used at: features/mixed.feature:11');
+    expect(r.out).toContain(`Given('something nobody wrote', async (ctx) => {`);
+  });
+
   it('list prints ids and tags', () => {
     const r = bddx('list');
     expect(r.code).toBe(0);
@@ -64,6 +78,19 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(lines[0]!.type).toBe('runStarted');
     expect(lines.at(-1)!.type).toBe('runFinished');
     expect(readFileSync(join(dir, 'j.xml'), 'utf8')).toContain('tests="3" failures="2"');
+  });
+
+  it('expands @data rows, switches data by profile, and exits 2 on data errors', () => {
+    const r = bddxIn(dataProject);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain('✔ ann has a balance (accounts.csv row 1)');
+    expect(r.out).toContain('✔ bob has a balance (accounts.csv row 2)');
+    expect(r.out).toContain('Parse errors:');
+    expect(r.out).toContain('features/accounts.feature:6 Data file "nope.csv" not found');
+    const ci = bddxIn(dataProject, '-p', 'ci', '--name', 'balance');
+    expect(ci.out).toContain('✔ ci-bot has a balance (accounts.csv row 1)');
+    const list = bddxIn(dataProject, 'list', '--name', 'balance');
+    expect(list.out).toContain('features/accounts.feature::user-has-a-balance[accounts.csv#2]');
   });
 
   it('usage errors exit 2', () => {

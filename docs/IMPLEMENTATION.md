@@ -3,7 +3,7 @@
 How bddx works today, module by module. Keep this in sync with the code; it is the first thing a new
 contributor (human or AI) reads after PROGRESS.md.
 
-Last updated: 2026-11-15 (Phase 0 + most of Phase 1).
+Last updated: 2026-11-15 (Phases 0–1 done, Phase 2 data-driven core done).
 
 ## 1. Big picture
 
@@ -32,7 +32,9 @@ those workers will call, so keep it free of global state.
 | File | Responsibility |
 | --- | --- |
 | `model.ts` | The internal model: `ScenarioInstance`, `StepInstance`, `Tag`, `FeatureInfo`, `RuleRef`, `ExampleRef`, `Status`, `worstStatus()`, `toErrorInfo()` |
-| `gherkin.ts` | `parseSpec(source, uri, {language, format})` using `@cucumber/gherkin`. Never throws on syntax errors; returns `errors[]` with lines |
+| `gherkin.ts` | `parseSpec(source, uri, {language, format})` (sync) and `parseSpecAsync(…, {dataLoader})` (with `@data` expansion), using `@cucumber/gherkin`. Never throw on syntax/data errors; return `errors[]` with lines |
+| `data/loader.ts` | `@data` support: `parseDataRef`, `createFileDataLoader` (path resolution, providers by extension, `applyQuery` filters), built-in CSV/TSV/JSON/YAML/XLSX providers |
+| `data/csv.ts` | RFC 4180 CSV parser |
 | `tags.ts` | `parseTag()` (key/value split), `tagsToMeta()`, `compileTagExpression()` (wraps `@cucumber/tag-expressions`) |
 | `selection.ts` | `selectScenarios(all, {tags, name, lines, ids})`, `parsePathWithLines('a.feature:12')` |
 | `events.ts` | Event schema v1 (`BddxEvent` union), `EventBus`, `emptySummary()` |
@@ -47,13 +49,27 @@ those workers will call, so keep it free of global state.
 5. `assignStableIds()`.
 
 **Stable scenario ids** (used for dependencies, reruns, reports):
-- `@id:<value>` tag wins → `<value>`; outline rows → `<value>[<row>]`.
-- Otherwise `<uri>::<slug(name)>` (+ `[<row>]`).
+- `@id:<value>` tag wins → `<value>`; outline rows → `<value>[<row>]`; data rows → `<value>[<source>#<dataRow>]`.
+- Otherwise `<uri>::<slug(template name)>` (+ the same suffixes). The TEMPLATE name is the name before
+  `<placeholder>` substitution, so changing data values never changes ids. `<dataRow>` is the row's number in the
+  source file (header excluded) BEFORE filtering, so filters never renumber.
 - Collisions within a file get `@<line>` appended.
 - URIs are POSIX paths relative to the config folder (rootDir).
 
 **Tags**: `@key:value` and `@key=value` split at the first `:` or `=`. `meta` maps key → value (`'true'` for
 bare tags). Effective tags = feature + rule + scenario + examples, de-duplicated by name.
+
+**External data (`@data`)** — `parseSpecAsync` step 1b, between parsing and `compile()`:
+1. Find `@data:` tags on Scenarios (feature- and rule-level children) and on Examples blocks.
+2. Load each via the `DataLoader` (`createFileDataLoader`): resolve `<dataDir>/<profile>/<file>` → `<dataDir>/<file>`
+   → next to the spec; pick a provider by extension; apply `?col=value` and `?rows=1-3,7` filters.
+3. Inject into the AST: a Scenario tag appends a synthetic Examples block (header = all columns, renamed by
+   `@dataField:<placeholder>=<column>`); an Examples tag replaces that block's body and keeps its header (the header
+   decides which columns are used). Injected rows are remembered (`RowSources`) so `ExampleRef.source/sourceRow` and
+   ids can name them.
+4. Cucumber's `compile()` then expands them exactly like normal outline rows (it expands any scenario with Examples).
+5. Any data problem → a `ParseErrorInfo` on the tag line and the scenario is removed from the document.
+   The CLI exits 2 when there are parse errors (other scenarios still run).
 
 ### 2.2 `@bddx/runtime` (depends on core)
 
@@ -63,6 +79,7 @@ bare tags). Effective tags = feature + rule + scenario + examples, de-duplicated
 | `api.ts` | Global user API: `Given/When/Then/Step`, `BeforeAll/AfterAll`, `BeforeFeature/AfterFeature`, `BeforeRule/AfterRule`, `Before/After` (= `BeforeScenario/AfterScenario`), `BeforeStep/AfterStep`, `defineParameterType`, `setDefaultTimeout` |
 | `executor.ts` | `Executor` / `execute()`: the serial run loop, hooks, contexts, events, summary |
 | `context.ts` | `Store` (typed key/value) and `Scope` (store + LIFO `defer()` cleanups) |
+| `decorators.ts` | Class-based steps: `@Steps()` class decorator, pending-method collection, per-scenario DI container (`resolve`, `CONTEXT` token, `static inject`, `dispose()`) |
 | `datatable.ts` | `DataTable` (`raw/rows/hashes/rowsHash/asObjects/transpose`), `DocString` |
 | `signals.ts` | `PendingSignal`, `SkipSignal`, `TimeoutError`, `withTimeout()` |
 | `types.ts` | `StepContext`, `FeatureContext`, `RunContext`, `ScenarioInfo`, hook/step option types |
@@ -86,6 +103,15 @@ The context is always first (no `this`), so arrow functions work and the shape p
 - `ctx.log()`, `ctx.attach(body, mediaType, name)`: emit `log` / `attachment` events tagged with scenario/step
 - `ctx.defer(fn)`: cleanup in the current scope (scenario for steps; feature for feature hooks; run for run hooks)
 - `ctx.pending(reason)`, `ctx.skip(reason)`
+
+**Class-based steps** (`decorators.ts`): `Given/When/Then/Before/After/BeforeStep/AfterStep` called WITHOUT a
+function return a TC39 method decorator. Method decorators run before the class decorator, so they push onto a
+module-level pending list that `@Steps()` drains and registers (`@Steps()` is required). Registered functions call
+`resolve(ctx, Class)`, which creates one instance per class per scenario (stored in `ctx.state`), resolving
+`static inject = [Dep, CONTEXT]` recursively with cycle detection. Instances with `dispose()` are disposed LIFO when
+the scenario scope closes. Run/feature/rule hooks cannot decorate methods (no per-scenario instance exists).
+**Trap:** never export a value named `then` from a package: its module namespace becomes thenable and
+`await import()` hangs (this happened with an early lowercase `then` decorator).
 
 **Hook levels implemented**: run, feature, rule, scenario, step. (Planned: worker, group in phase 3; attempt in phase 4.)
 - Tag filters: feature hooks → feature tags; rule hooks → rule tags; scenario/step hooks → scenario tags.
@@ -121,6 +147,7 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 | --- | --- |
 | `console` (`pretty`, `progress`) | Scenario lines, failing steps, failure list with first user stack frame, undefined-step snippets, summary. Options: `style`, `verbose`, `colors`, `write` |
 | `ndjson` | Every event as one JSON line. Option `outputFile` (default `reports/bddx.ndjson`) |
+| `cucumber-json` (alias `json`) | Legacy Cucumber JSON (features → elements → steps, ns durations, embeddings) for existing dashboards. Option `outputFile` (default `reports/cucumber.json`) |
 | `junit` | One testsuite per feature. failed/undefined/ambiguous → `<failure>`, skipped/pending → `<skipped>`. Option `outputFile`, `suiteName` |
 
 `createReporter(spec)` accepts `'name'`, `'name:outputFile'`, `['name', options]` or a `Reporter` object.
@@ -131,12 +158,13 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 | --- | --- |
 | `config.ts` | `BddxConfig`, `defineConfig`, `loadConfig()` (ts/mts/js/mjs/json), profiles, `mergeOptions()` (tags ANDed, params merged) |
 | `run.ts` | `runBddx()` pipeline; `registerTypeScriptLoader()` (tsx `register()`); spec & support-file discovery |
-| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run` and `list` commands, help, exit codes |
+| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run`, `list` and `snippets` commands, help, exit codes |
 | `bin.ts` | `#!/usr/bin/env node` entry |
 
 **`runBddx()` pipeline**: register tsx → load config (+profile) → merge CLI overrides → discover specs
 (paths/globs/`file:line`) → parse → select → import support files (they register on the global registry) →
-create reporters (output paths resolved against the config folder) → `Executor.execute()` → flush bus →
+create reporters (output paths resolved against the config folder; specs parsed with `parseSpecAsync` and a
+file data loader built from `dataDir` + `--profile`) → `Executor.execute()` → flush bus →
 close reporters → exit code.
 
 Path rules: config globs are relative to the config file's folder (rootDir). CLI positional paths are relative to

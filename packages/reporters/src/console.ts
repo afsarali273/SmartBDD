@@ -75,7 +75,10 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             write(`\n${s.featureName}  ${dim(s.uri)}\n`);
           }
           const extra = e.reason ? dim(` — ${e.reason}`) : '';
-          const row = s.example ? dim(` (${s.example.name ? `${s.example.name} ` : ''}#${s.example.index})`) : '';
+          const ex = s.example;
+          const row = !ex
+            ? ''
+            : dim(ex.source ? ` (${ex.source} row ${ex.sourceRow})` : ` (${ex.name ? `${ex.name} ` : ''}#${ex.index})`);
           write(`  ${c(e.status, ICON[e.status])} ${s.name}${row}${s.ruleName ? dim(` [${s.ruleName}]`) : ''} ${dim(`:${s.line} ${e.durationMs}ms`)}${extra}\n`);
           if (opts.verbose || (e.status !== 'passed' && e.status !== 'skipped')) {
             const finished = new Map((steps.get(e.scenarioId) ?? []).map((x) => [x.stepId, x]));

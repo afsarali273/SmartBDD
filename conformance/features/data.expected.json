@@ -1,0 +1,9 @@
+{
+  "scenarios": {
+    "data.feature::from-csv-fruit[fruit.csv#2]": "passed",
+    "data.feature::examples-filled-from-csv[fruit.csv#1]": "passed",
+    "data.feature::examples-filled-from-csv[fruit.csv#3]": "passed"
+  },
+  "trace": ["pear costs 2", "name=apple", "name=plum"],
+  "success": true
+}

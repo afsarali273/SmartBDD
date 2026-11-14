@@ -2,11 +2,13 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EventBus, parseSpec, type Status } from '@bddx/core';
+import { EventBus, createFileDataLoader, parseSpecAsync, type Status } from '@bddx/core';
 import { Executor, SupportRegistry } from '@bddx/runtime';
 import { registerConformanceSteps } from './steps.js';
 
 const dir = fileURLToPath(new URL('../features/', import.meta.url));
+// @data files live in conformance/data (dataDir), spec URIs are relative to conformance/features.
+const dataLoader = createFileDataLoader({ dataDir: fileURLToPath(new URL('../data/', import.meta.url)), rootDir: dir });
 
 interface Expected {
   scenarios?: Record<string, Status>;
@@ -23,7 +25,7 @@ describe('conformance', () => {
       const expectedFile = join(dir, file.replace(/\.feature$/, '.expected.json'));
       expect(existsSync(expectedFile), `missing ${expectedFile}`).toBe(true);
       const expected = JSON.parse(readFileSync(expectedFile, 'utf8')) as Expected;
-      const spec = parseSpec(readFileSync(join(dir, file), 'utf8'), file);
+      const spec = await parseSpecAsync(readFileSync(join(dir, file), 'utf8'), file, { dataLoader });
       expect(spec.errors).toEqual([]);
 
       const trace: string[] = [];

@@ -4,8 +4,10 @@ import { pathToFileURL } from 'node:url';
 import { glob } from 'tinyglobby';
 import {
   EventBus,
+  createFileDataLoader,
   parsePathWithLines,
-  parseSpec,
+  parseSpecAsync,
+  type DataLoader,
   selectScenarios,
   type ParsedSpec,
   type RunSummary,
@@ -109,10 +111,11 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const { files, lines } = await discoverSpecs(rootDir, featurePatterns);
   if (!files.length) throw new UsageError(`No spec files found for: ${featurePatterns.join(', ')} (root: ${rootDir})`);
 
+  const dataLoader = makeDataLoader(rootDir, opts, req.profile);
   const specs: ParsedSpec[] = [];
   for (const uri of files) {
     const source = await readFile(resolve(rootDir, uri), 'utf8');
-    specs.push(parseSpec(source, uri, { ...(opts.language ? { language: opts.language } : {}) }));
+    specs.push(await parseSpecAsync(source, uri, { dataLoader, ...(opts.language ? { language: opts.language } : {}) }));
   }
   const all = specs.flatMap((s) => s.scenarios);
   const selected = selectScenarios(all, {
@@ -150,6 +153,14 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
 
   const exitCode: 0 | 1 | 2 = hasParseErrors ? 2 : result.success ? 0 : 1;
   return { success: result.success && !hasParseErrors, summary: result.summary, exitCode, scenarios: selected };
+}
+
+export function makeDataLoader(rootDir: string, opts: BddxOptions, profile?: string): DataLoader {
+  return createFileDataLoader({
+    rootDir,
+    dataDir: resolve(rootDir, opts.dataDir ?? '.'),
+    ...(profile ? { profile } : {}),
+  });
 }
 
 /** Report paths in the config are relative to the config folder, not to the shell's cwd. */

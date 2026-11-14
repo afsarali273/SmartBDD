@@ -6,6 +6,7 @@ Language-neutral contract that every bddx engine (TypeScript now, Java later) mu
 conformance/
   features/<name>.feature         the spec under test
   features/<name>.expected.json   the expected outcome
+  data/                           files referenced by @data: tags (the data folder)
   ts/steps.ts                     TypeScript implementation of the shared step vocabulary
   ts/conformance.test.ts          runs every feature and compares with expected.json
 ```

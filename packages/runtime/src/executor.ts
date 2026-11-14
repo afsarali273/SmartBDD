@@ -120,12 +120,30 @@ export class Executor {
       type: 'planReady',
       scenarios: scenarios.map((s) => ({
         id: s.id,
+        keyword: s.keyword,
         name: s.name,
+        description: s.description,
+        feature: {
+          name: s.feature.name,
+          description: s.feature.description,
+          line: s.feature.line,
+          tags: s.feature.tags.map((t) => t.name),
+          language: s.feature.language,
+        },
         uri: s.uri,
         line: s.line,
         featureName: s.feature.name,
         ...(s.rule ? { ruleName: s.rule.name } : {}),
-        ...(s.example ? { example: { name: s.example.name, index: s.example.index, values: s.example.values } } : {}),
+        ...(s.example
+          ? {
+              example: {
+                name: s.example.name,
+                index: s.example.index,
+                values: s.example.values,
+                ...(s.example.source ? { source: s.example.source, sourceRow: s.example.sourceRow! } : {}),
+              },
+            }
+          : {}),
         tags: s.tags.map((t) => t.name),
         steps: s.steps.map((st) => ({ id: st.id, keyword: st.keyword, text: st.text, line: st.line })),
       })),

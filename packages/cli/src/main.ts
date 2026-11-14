@@ -1,22 +1,24 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BDDX_VERSION, parseSpec, selectScenarios } from '@bddx/core';
+import { BDDX_VERSION, parseSpecAsync, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
-import { discoverSpecs, registerTypeScriptLoader, runBddx } from './run.js';
+import { discoverSpecs, makeDataLoader, registerTypeScriptLoader, runBddx } from './run.js';
+import type { Reporter } from '@bddx/reporters';
 
 const HELP = `bddx ${BDDX_VERSION}
 
 Usage:
   bddx [run] [paths...] [options]    Run scenarios (paths may be files, folders, globs, file:line)
   bddx list  [paths...] [options]    List selected scenarios with ids and tags, without running
+  bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
 
 Options:
   -c, --config <file>     Config file (default: bddx.config.{ts,mts,js,mjs,json} in cwd)
   -p, --profile <name>    Use a profile from the config
   -t, --tags <expr>       Tag expression, e.g. "@smoke and not @wip"
       --name <regex>      Only scenarios whose name matches
-  -f, --format <spec>     Add a reporter: console | progress | junit[:file] | ndjson[:file]  (repeatable)
+  -f, --format <spec>     Add a reporter: console | progress | junit[:file] | ndjson[:file] | cucumber-json[:file]  (repeatable)
   -D, --define k=v        Set ctx.params.k (repeatable)
       --dry-run           Match steps and report undefined ones, run nothing
       --fail-fast         Stop after the first failed scenario
@@ -66,7 +68,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (positionals[0] === 'run' || positionals[0] === 'list') {
+  if (positionals[0] === 'run' || positionals[0] === 'list' || positionals[0] === 'snippets') {
     command = positionals[0];
     paths = positionals.slice(1);
   }
@@ -80,6 +82,7 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
+    if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
 
     const outcome = await runBddx({
       ...(values.config ? { config: values.config } : {}),
@@ -113,8 +116,9 @@ async function list(paths: string[], config?: string, profile?: string, tags?: s
   const patterns = paths.length ? paths.map((p) => resolve(cwd, p)) : Array.isArray(opts.features) ? opts.features : [opts.features ?? DEFAULTS.features].flat();
   const { files, lines } = await discoverSpecs(loaded.rootDir, patterns);
   let errors = 0;
+  const dataLoader = makeDataLoader(loaded.rootDir, opts, profile);
   for (const uri of files) {
-    const spec = parseSpec(await readFile(resolve(loaded.rootDir, uri), 'utf8'), uri);
+    const spec = await parseSpecAsync(await readFile(resolve(loaded.rootDir, uri), 'utf8'), uri, { dataLoader });
     for (const e of spec.errors) {
       errors++;
       process.stderr.write(`${e.uri}:${e.line ?? '?'} ${e.message}\n`);
@@ -131,4 +135,39 @@ async function list(paths: string[], config?: string, profile?: string, tags?: s
     }
   }
   return errors ? 2 : 0;
+}
+
+async function snippets(paths: string[], config?: string, profile?: string, tags?: string, name?: string): Promise<number> {
+  const found = new Map<string, string[]>();
+  const collector: Reporter = {
+    name: 'snippets',
+    onEvent(e) {
+      if (e.type === 'planReady') for (const sc of e.scenarios) for (const st of sc.steps) where.set(`${sc.id}|${st.id}`, `${sc.uri}:${st.line}`);
+      if (e.type === 'stepFinished' && e.snippet) {
+        const list = found.get(e.snippet) ?? [];
+        list.push(where.get(`${e.scenarioId}|${e.stepId}`) ?? e.scenarioId);
+        found.set(e.snippet, list);
+      }
+    },
+  };
+  const where = new Map<string, string>();
+  const outcome = await runBddx({
+    ...(config ? { config } : {}),
+    ...(profile ? { profile } : {}),
+    ...(paths.length ? { paths } : {}),
+    ...(tags ? { tags } : {}),
+    ...(name ? { name } : {}),
+    dryRun: true,
+    strict: false,
+    reporters: [collector],
+  });
+  if (!found.size) {
+    process.stdout.write('All steps are defined.\n');
+    return outcome.exitCode;
+  }
+  process.stdout.write(`// ${found.size} undefined step pattern(s)\nimport { Given, When, Then, type DataTable } from '@bddx/runtime';\n\n`);
+  for (const [snippet, locations] of found) {
+    process.stdout.write(`// used at: ${[...new Set(locations)].join(', ')}\n${snippet}\n\n`);
+  }
+  return outcome.exitCode;
 }

@@ -69,3 +69,26 @@ describe('createReporter', () => {
     expect(() => createReporter('nope')).toThrow(/Unknown reporter "nope"/);
   });
 });
+
+describe('cucumber-json reporter', () => {
+  it('writes features > elements > steps with statuses and nanosecond durations', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-cj-'));
+    const file = join(dir, 'cucumber.json');
+    const { cucumberJsonReporter } = await import('@bddx/reporters');
+    await runWith(cucumberJsonReporter({ outputFile: file }));
+    const json = JSON.parse(readFileSync(file, 'utf8')) as Array<{
+      name: string;
+      uri: string;
+      elements: Array<{ name: string; keyword: string; steps: Array<{ keyword: string; name: string; result: { status: string; duration: number; error_message?: string } }> }>;
+    }>;
+    expect(json).toHaveLength(1);
+    expect(json[0]!.name).toBe('Login & <stuff>');
+    expect(json[0]!.elements.map((e) => e.name)).toEqual(['good', 'bad', 'missing']);
+    expect(json[0]!.elements[0]!.keyword).toBe('Scenario');
+    const bad = json[0]!.elements[1]!.steps;
+    expect(bad.map((s) => s.result.status)).toEqual(['passed', 'failed']);
+    expect(bad[1]!.result.error_message).toContain('expected <200>');
+    expect(json[0]!.elements[2]!.steps[0]!.result.status).toBe('undefined');
+    expect(typeof bad[0]!.result.duration).toBe('number');
+  });
+});

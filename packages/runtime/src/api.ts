@@ -10,6 +10,7 @@
  * Every function writes to the global SupportRegistry (see registry.ts).
  */
 import { callerLocation, getGlobalRegistry, type ParameterTypeOptions } from './registry.js';
+import { hookDecorator, stepDecorator, type MethodDecorator } from './decorators.js';
 import type {
   FeatureHookFn,
   HookOptions,
@@ -23,12 +24,17 @@ import type { HookKind, HookLevel } from '@bddx/core';
 type StepRegistrar = {
   (pattern: string | RegExp, fn: StepFn): void;
   (pattern: string | RegExp, options: StepOptions, fn: StepFn): void;
+  /** Without a function: a method decorator for `@Steps()` classes. */
+  (pattern: string | RegExp, options?: StepOptions): MethodDecorator;
 };
 
 function makeStepRegistrar(): StepRegistrar {
-  return ((pattern: string | RegExp, a: StepOptions | StepFn, b?: StepFn) => {
-    const [options, fn] = typeof a === 'function' ? [{}, a] : [a, b!];
-    getGlobalRegistry().defineStep(pattern, fn, options, callerLocation());
+  return ((pattern: string | RegExp, a?: StepOptions | StepFn, b?: StepFn) => {
+    const location = callerLocation();
+    const [options, fn] = typeof a === 'function' ? [{}, a] : [a ?? {}, b];
+    if (!fn) return stepDecorator(pattern, options, location);
+    getGlobalRegistry().defineStep(pattern, fn, options, location);
+    return undefined;
   }) as StepRegistrar;
 }
 
@@ -48,9 +54,18 @@ function normalise(opts: HookArg): HookOptions {
 function makeHook<F>(level: HookLevel, kind: HookKind) {
   function register(fn: F): void;
   function register(options: HookOptions | string, fn: F): void;
-  function register(a: F | HookOptions | string, b?: F): void {
-    const [opts, fn] = typeof a === 'function' ? [undefined, a as F] : [a as HookArg, b as F];
-    getGlobalRegistry().defineHook(level, kind, normalise(opts), fn as never, callerLocation());
+  /** Without a function: a method decorator (scenario and step hooks only). */
+  function register(options?: HookOptions | string): MethodDecorator;
+  function register(a?: F | HookOptions | string, b?: F): void | MethodDecorator {
+    const location = callerLocation();
+    const [opts, fn] = typeof a === 'function' ? [undefined, a as F] : [a as HookArg, b];
+    if (!fn) {
+      if (level !== 'scenario' && level !== 'step') {
+        throw new Error(`${kind} ${level} hooks cannot decorate class methods (instances are per scenario); register a function instead`);
+      }
+      return hookDecorator(level, kind, normalise(opts), location);
+    }
+    getGlobalRegistry().defineHook(level, kind, normalise(opts), fn as never, location);
   }
   return register;
 }

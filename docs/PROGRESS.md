@@ -2,35 +2,28 @@
 
 The single source of truth for "where are we". Update it at the end of every work session (see CLAUDE.md).
 
-## Current state (2026-11-15)
+## Current state (2026-11-15, session 2)
 
-- **Phase 0:** done (CCK parse gate deferred, see ROADMAP).
-- **Phase 1:** done except class/decorator steps with DI, Cucumber JSON reporter, `snippets` command, and the
-  "real project" gate.
-- **Health:** `npm run verify` green. 47 tests: 12 core, 19 runtime, 4 reporters, 7 CLI end-to-end, 5 conformance.
-- **Working name:** bddx (ADR-002). **Runner:** own (ADR-001), still open for the user to overturn.
+- **Phase 0:** done (CCK parse gate deferred).
+- **Phase 1:** done except the "real project" gate (run the user's own app end to end).
+- **Phase 2:** core done: `@data` with CSV/TSV/JSON/YAML/XLSX, filters, `@dataField`, `dataDir` + per-profile data,
+  stable data-row ids, data errors as parse errors. Remaining Phase 2 items below.
+- **Health:** `npm run verify` green on the user's Mac. 65 tests.
+- **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, git remote `git@github.com:afsarali273/SmartBDD.git`
+  (SSH; the user pushes from their Mac).
 
 ## Next up
 
-Do these in order. Each is small enough for one session.
-
-1. **Decorator steps + DI (Phase 1).** Add `packages/runtime/src/decorators.ts`:
-   - `@Steps()` class decorator, `@Given/@When/@Then(pattern, options?)` method decorators, `@BeforeScenario` etc.
-   - Use TC39 standard decorators (TS 5 default, no `experimentalDecorators`). Collect metadata with `context.addInitializer`
-     or a static map keyed by class.
-   - Per-scenario instances: executor creates one instance per class per scenario (lazy, on first use), stored in
-     `ctx.state` under a symbol. Constructor injection: classes declare `static inject = [OtherClass]`;
-     resolve recursively, detect cycles.
-   - Method receives `(...args)` and gets context via `this.ctx` (inject `StepContext` as a token).
-   - Conformance: add `conformance/features/class-steps.feature` reusing existing vocabulary? (Vocabulary is
-     language-level; keep conformance unchanged, add runtime unit tests instead.)
-   - Record design in an ADR.
-2. **Cucumber JSON reporter** (`packages/reporters/src/cucumber-json.ts`): needs feature/step keyword data, which
-   `planReady` already carries; add `description`/`keyword` fields to `PlannedScenario` if needed (additive).
-3. **`bddx snippets`**: dry-run + print unique snippets grouped by file, nothing else.
-4. **CCK parse gate**: vendor a handful of Cucumber Compatibility Kit `.feature` files into `conformance/cck/`
-   (MIT, keep their licence header) and assert `parseSpec` yields no errors.
-5. Start **Phase 2** with the `DataProvider` interface and the CSV loader.
+1. **Gauge-style Markdown specs** (Phase 2): second parser in `core/src/markdown.ts`. `# Spec` = feature,
+   `## Scenario` = scenario, `* step` lines, Markdown tables as data tables / spec-level data table, `tags:` line.
+   Map to the same `ScenarioInstance`; choose by extension `.spec.md` (keep `.feature.md` = Cucumber MDG). ADR first.
+2. **Text-defined composite steps** (Gauge concepts / JBehave composites): `*.concept.md` files defining
+   `# Login as <user>` followed by `* steps`; register as step definitions that run sub-steps (each sub-step
+   reported as nested events → needs additive `parentStepId` on step events).
+3. **Call a scenario from a step**: `Given I run scenario "X" from "y.feature"` (runtime step that executes another
+   instance's steps inline, sharing the scenario store).
+4. **Phase 2 gate**: same feature from inline Examples, CSV and XLSX with identical results (add to conformance).
+5. Then **Phase 3** (planner, groups, dependencies, workers): start with `packages/core/src/plan/` and `bddx plan`.
 
 ## Known gaps / caveats
 
@@ -41,7 +34,6 @@ Do these in order. Each is small enough for one session.
 - Run-level hook failures are summarised under "Hook failures:" in console output, not per scenario.
 - `bddx list` does not load support code, so it cannot flag undefined steps (use `--dry-run`).
 - Working copy: `/Users/afsarali/Repository/AI_Projects/BDD_Framework` (all future work goes here directly).
-- No git repository yet. Suggested first commit after extracting: `git init && git add -A && git commit -m "Phase 0 + Phase 1 core"`.
 
 ## Session log
 
@@ -68,3 +60,17 @@ their `BDD_Framework` folder, because the session could not write to their compu
 - User extracted the zip into `BDD_Framework`. Restored `.gitignore` (lost in extraction), ran `npm install`
   and `npm run verify` on the user's Mac: 47 tests pass, example passes.
 - From now on all work happens directly in this folder (see CLAUDE.md "Where to work").
+
+### 2026-11-15: Session 2 (Phase 1 finished, Phase 2 data core)
+
+Worked directly in the user's folder via device shell.
+- Git repo created; first commit `aad9aef`; remote switched to SSH; user pushed.
+- runtime: `decorators.ts` (class steps + DI), `api.ts` functions double as decorators (ADR-010). Found and fixed a
+  hang: exporting `then` made the package thenable. `vitest.config.ts` gained a TC39-decorator pre-compile plugin.
+- reporters: `cucumber-json` (+ `json` alias); events: additive `keyword`, `description`, `feature{…}`,
+  `example.source/sourceRow` on `PlannedScenario`.
+- cli: `bddx snippets`; `dataDir` option; parse via `parseSpecAsync` with a file data loader (also in `list`).
+- core: `data/` (CSV parser, loader, providers), `parseSpecAsync`, AST injection (ADR-011), template-name ids (ADR-013).
+- deps: `yaml`, `exceljs` in core; root override uuid ^11.1.1 (ADR-012); lockfile regenerated; `npm audit` clean.
+- tests: decorators (5), cucumber-json (1), snippets + data CLI (2), data (9), conformance `data.feature`.
+- example: `checkout.feature` (class steps), `pricing-data.feature` (CSV + XLSX + qa profile), `data/make-xlsx.mjs`.

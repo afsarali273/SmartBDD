@@ -4,7 +4,7 @@ A BDD automation framework that keeps Gherkin's readability and adds TestNG-styl
 groups, dependencies, mixed parallel/serial execution and layered retries.
 TypeScript first, Java next. ("bddx" is a working name.)
 
-> **Status:** Phase 0 complete, Phase 1 mostly complete. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 0–1 complete; Phase 2 (data-driven) core done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Quick start
 
@@ -44,6 +44,42 @@ When('I add {int} {string}', (ctx, qty: number, product: string) => {
 Then('the basket total is {money}', (ctx, cents: number) => { /* assert */ });
 ```
 
+Class-based steps with dependency injection:
+
+```ts
+import { CONTEXT, Given, Steps, Then, type StepContext } from '@bddx/runtime';
+
+class Wallet {                       // any class can be injected; one instance per scenario
+  static inject = [CONTEXT] as const;
+  constructor(private ctx: StepContext) {}
+  cents = 0;
+}
+
+@Steps()
+class WalletSteps {
+  static inject = [Wallet] as const;
+  constructor(private wallet: Wallet) {}
+
+  @Given('a wallet with {int} cents')
+  fund(cents: number) { this.wallet.cents = cents; }
+}
+```
+
+Data-driven scenarios from files (CSV, TSV, JSON, YAML, XLSX):
+
+```gherkin
+@data:users.csv?role=admin
+Scenario: <name> can log in
+  When I log in as "<name>"
+
+Scenario Outline: credit limit for <who>
+  Then <who> may spend <limit>
+
+  @data:limits.xlsx#Admins?rows=1-10 @dataField:who=name
+  Examples:
+    | who | limit |
+```
+
 ```ts
 // bddx.config.ts
 import { defineConfig } from '@bddx/cli';
@@ -60,6 +96,7 @@ export default defineConfig({
 ```
 bddx [run] [paths...]  -t "@smoke and not @wip"  -p ci  -D env=qa  -f ndjson:reports/e.ndjson  --dry-run
 bddx list  [paths...]  # ids + tags of selected scenarios
+bddx snippets         # code for every undefined step
 ```
 
 Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.

@@ -1,12 +1,14 @@
 import { consoleReporter } from './console.js';
 import { junitReporter } from './junit.js';
 import { ndjsonReporter } from './ndjson.js';
+import { cucumberJsonReporter } from './cucumber-json.js';
 import type { Reporter, ReporterFactory, ReporterOptions } from './types.js';
 
 export * from './types.js';
 export { consoleReporter, type ConsoleReporterOptions } from './console.js';
 export { junitReporter } from './junit.js';
 export { ndjsonReporter } from './ndjson.js';
+export { cucumberJsonReporter } from './cucumber-json.js';
 
 /** Built-in reporters by name. Plugins (phase 6) will be able to add to this map. */
 export const builtInReporters: Record<string, ReporterFactory> = {
@@ -15,6 +17,8 @@ export const builtInReporters: Record<string, ReporterFactory> = {
   progress: (o) => consoleReporter({ ...o, style: 'progress' }),
   junit: junitReporter,
   ndjson: ndjsonReporter,
+  'cucumber-json': cucumberJsonReporter,
+  json: cucumberJsonReporter,
 };
 
 /**
