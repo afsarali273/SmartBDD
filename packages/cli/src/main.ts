@@ -22,7 +22,7 @@ Options:
   -p, --profile <name>    Use a profile from the config
   -t, --tags <expr>       Tag expression, e.g. "@smoke and not @wip"
       --name <regex>      Only scenarios whose name matches
-  -f, --format <spec>     Add a reporter: console | progress | junit[:file] | ndjson[:file] | cucumber-json[:file]  (repeatable)
+  -f, --format <spec>     Add a reporter: console | progress | html[:file] | junit[:file] | ndjson[:file] | cucumber-json[:file]  (repeatable)
   -D, --define k=v        Set ctx.params.k (repeatable)
       --dry-run           Match steps and report undefined ones, run nothing
       --fail-fast         Stop after the first failed scenario

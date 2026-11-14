@@ -10,7 +10,8 @@ Do not build in a separate workspace and hand over zips.
 
 ## Resume protocol (do this first, every session)
 
-1. Read `docs/PROGRESS.md` top to bottom. The **"Next up"** section says exactly what to do.
+1. Read `docs/STATUS.md` (what exists, what remains), then `docs/PROGRESS.md` top to bottom. The **"Next up"**
+   section of PROGRESS.md says exactly what to do.
 2. Skim `docs/IMPLEMENTATION.md` for the module you will touch.
 3. Run `npm install && npm run verify`. Everything must be green before you start.
    If it is not, fixing that IS the next task. Record it in PROGRESS.md.
@@ -18,7 +19,7 @@ Do not build in a separate workspace and hand over zips.
    - `npm run verify` must pass,
    - tick the item in `docs/ROADMAP.md`,
    - add a dated entry to the **Session log** in `docs/PROGRESS.md` (what changed, files touched, anything half-done),
-   - update **Next up**.
+   - update **Next up**, and `docs/STATUS.md` when a feature lands or a remaining item changes.
 5. If you stop mid-task (context limit, error you cannot solve), write a **"Stopped mid-task"** entry in
    PROGRESS.md: the goal, what is done, the exact failing command/output, and your best hypothesis.
 
@@ -47,5 +48,18 @@ Do not build in a separate workspace and hand over zips.
 | `npm test` | all vitest suites |
 | `npm run typecheck` | build + type-check tests/examples |
 | `npm run example` | run `examples/basic` through the CLI |
-| `npm run verify` | typecheck + test + example |
+| `npm run example:orchestration` / `example:orchestration:process` / `example:resilience` | the other examples (inline / worker processes) |
+| `npm run verify` | typecheck + test + all examples (what must be green before and after every change) |
 | `node packages/cli/dist/bin.js --help` | CLI help |
+
+## Documentation map
+
+| File | Read it for |
+| --- | --- |
+| `docs/STATUS.md` | Everything done so far and everything remaining, on one page |
+| `docs/PROGRESS.md` | Current state, **Next up**, known gaps, session log |
+| `docs/IMPLEMENTATION.md` | How each module works (packages, orchestration, resilience, worker processes, logging, events) |
+| `docs/DECISIONS.md` | ADRs: why things are the way they are |
+| `docs/ROADMAP.md` | Phase checklists (tick items here) |
+| `docs/design/code-linked-markdown.md` | Parked design (owner decides when to start) |
+| `conformance/README.md` | Conformance step vocabulary |

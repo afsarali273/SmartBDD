@@ -4,7 +4,8 @@ A BDD automation framework that keeps Gherkin's readability and adds TestNG-styl
 groups, dependencies, mixed parallel/serial execution and layered retries.
 TypeScript first, Java next. ("bddx" is a working name.)
 
-> **Status:** Phases 0–1 and 4 complete; Phase 2 data core and Phase 3 orchestration done (inline or worker processes). See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 0, 1, 3 and 4 done; Phase 2 data core done; Phase 5 started (HTML report v1).
+> Everything done and remaining: [docs/STATUS.md](docs/STATUS.md). Next step: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Quick start
 
@@ -202,6 +203,10 @@ bddx list  [paths...]  # ids + tags of selected scenarios
 bddx snippets         # code for every undefined step
 bddx plan [--explain <id>] [--plan-format text|json|mermaid]   # execution graph, runs nothing
 bddx run -w 4 --no-deps   # 4 parallel workers; do not pull in dependencies
+bddx run -w 4 --pool process   # 4 worker processes
+bddx run -r 2 --fail-on-flaky  # retry failed scenarios twice; flaky passes fail the run
+bddx run --rerun-failed reports/bddx.ndjson
+bddx report run1.ndjson run2.ndjson -f html:reports/report.html
 ```
 
 Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.
@@ -210,16 +215,19 @@ Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed
 
 | Path | What |
 | --- | --- |
-| `packages/core` | Spec model, Gherkin compiler, tags, selection, event schema |
-| `packages/runtime` | Step registry, hooks, scoped context, executor, global API |
+| `packages/core` | Spec model, Gherkin compiler, `@data` loaders, tags, selection, planner, event schema + merge |
+| `packages/runtime` | Step registry, hooks, scoped context, executor, scheduler, process pool, logging, global API |
 | `packages/reporters` | console, HTML, NDJSON, JUnit XML, Cucumber JSON |
 | `packages/cli` | `bddx` command, config loading, file discovery |
 | `conformance` | Language-neutral features + expected results (Java must pass these too) |
-| `examples/basic` | Small runnable project |
+| `examples/basic` | Steps, hooks, outlines, class steps + DI, `@data`, step repeat/retry |
+| `examples/orchestration` | Groups, dependencies, locks, exports, logs with images (inline and `--pool process`) |
+| `examples/resilience` | Scenario/group retry, flaky, quarantine, soft assertions, time budget |
 | `docs` | Implementation notes, progress log, decisions, roadmap |
 
 ## Documentation
 
+- [docs/STATUS.md](docs/STATUS.md): everything done so far and everything remaining, on one page
 - [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md): how it works, module by module
 - [docs/PROGRESS.md](docs/PROGRESS.md): what is done, what is next, how to resume
 - [docs/DECISIONS.md](docs/DECISIONS.md): architecture decision records

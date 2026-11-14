@@ -1,6 +1,7 @@
 # Roadmap and task checklist
 
-Tick items as they land (`[x]`). Each phase ends with its gate. The design rationale lives in the
+Tick items as they land (`[x]`). Each phase ends with its gate. For a one-page summary of what is done and what remains,
+see [STATUS.md](STATUS.md). The design rationale lives in the
 "Next-Gen BDD Framework — Research & Build Plan" doc; syntax proposals for later phases are copied here so this
 file is self-contained.
 
@@ -31,7 +32,7 @@ file is self-contained.
 - [x] `bddx snippets` command
 - [ ] Gate: a real project runs end to end, serially
 
-## Phase 2: Data-driven specs (in progress)
+## Phase 2: Data-driven specs (data core done)
 
 - [x] `DataLoader` / `DataProvider` interfaces in core (`createFileDataLoader`, extra providers by extension)
 - [x] `@data:<file>[#selector][?col=val&rows=1-3,7]` on Scenario/Outline (adds Examples) or Examples (fills body)
@@ -42,7 +43,7 @@ file is self-contained.
 - [x] Data errors = parse errors on the tag line (missing file/column, bad filter, no rows); scenario dropped, exit 2
 - [ ] Data providers for SQL queries and HTTP endpoints (plugin API, phase 6)
 - [ ] Text-defined composite steps (`.steps.md` or `.concept` files)
-- [ ] Call a scenario from a step: `Given I run scenario "X" from "y.feature"`
+- [ ] ~~Call a scenario from a step~~ parked by the owner (dependencies + exports + step repeat cover current needs)
 - [ ] Gate: same feature runs from inline Examples, CSV and XLSX with identical results
 
 ## Cross-cutting: own architecture, swappable third-party parts
@@ -51,7 +52,7 @@ file is self-contained.
 - [x] Cucumber libraries isolated in `adapters/` (only files allowed to import them); spec parser registry by suffix
 - [x] TestNG-style hook names (`BeforeSuite`/`AfterSuite`) and hook decorators on static methods at every level
 
-## Phase 3: Orchestration (the differentiator) — in progress
+## Phase 3: Orchestration (the differentiator) ✅ (core)
 
 - [x] `defaultMode` / `groups.default` for ungrouped scenarios (implicit group: scheduling only)
 - [x] `--set path=value` overrides for any config option
@@ -83,7 +84,7 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [x] Hard vs soft dependencies; skip reason `dependency failed: <id> (<status>)`; group `onDependencyFailure`
 - [x] Exports between scenarios (`ctx.export`, `ctx.from(id).get`), structured-clone copies (ready for processes)
 - [x] Events: `groupStarted/Finished`, planReady `workers`/`groups`, PlannedScenario `groups/dependsOn/locks/priority/exclusive/pulledInBy`
-- [ ] Events: `workerStarted`, `waitedForMs` (with worker processes)
+- [ ] Events: `workerStarted`, `waitedForMs` (worker processes exist now; events not yet)
 - [x] Conformance: `dependencies.feature` (hard/soft/priority); timing rules covered by runtime tests
 - [ ] `@requires:<file.feature>` spec-level preconditions
 - [ ] HTML/console view of the executed graph (timeline per worker) — Phase 5
@@ -126,7 +127,7 @@ in TS/Java; the annotated document is the report. Design note: [design/code-link
 ## Phase 6: Ecosystem
 
 - [ ] Plugin API (data loaders, reporters, parameter types, retry analyzers, plan modifiers)
-- [ ] Playwright integration (browser/page per scenario, traces as attachments)
+- [ ] Playwright integration (browser per worker via BeforeWorker, page per scenario, traces/screenshots as attachments, browser steps `concurrent: false`)
 - [ ] HTTP step library (Karate-style JSON matching)
 - [ ] Allure reporter
 - [ ] Step catalogue export (JSON) + MCP server for AI assistants

@@ -53,7 +53,10 @@ suffix (`specParserFor`); the CLI's folder globs come from `specFileGlobSuffix()
 | `data/csv.ts` | RFC 4180 CSV parser |
 | `tags.ts` | `parseTag()` (key/value split), `tagsToMeta()`, `compileTagExpression()` (wraps `@cucumber/tag-expressions`) |
 | `selection.ts` | `selectScenarios(all, {tags, name, lines, ids})`, `parsePathWithLines('a.feature:12')` |
-| `events.ts` | Event schema v1 (`BddxEvent` union), `EventBus`, `emptySummary()` |
+| `events.ts` | Event schema v1 (`BddxEvent` union), `EventBus`, `emptySummary()`, `LogLevel` |
+| `events-merge.ts` | `parseNdjson`, `finalResults`, `idsToRerun` (--rerun-failed), `mergeEventStreams` (`bddx report`) |
+| `step-tags.ts` | Step-line trailing tags (`@repeat` … `@concurrency`), scenario step defaults, `parseDuration` |
+| `plan/` | Planner (`buildPlan`: groups, deps, locks, priority, retry, quarantine, validation), plan types, text/JSON/Mermaid rendering |
 | `ids.ts` | `slugify()`, `createIdGenerator()` |
 
 **Parsing pipeline** (`adapters/cucumber-gherkin.ts`):
@@ -93,8 +96,11 @@ bare tags). Effective tags = feature + rule + scenario + examples, de-duplicated
 | --- | --- |
 | `ports.ts`, `adapters/cucumber-expressions.ts` | `StepExpressionEngine` interface + Cucumber Expressions adapter |
 | `registry.ts` | `SupportRegistry`: steps, hooks, parameter types (delegated to the engine), matching, snippets. `getGlobalRegistry()` (stored on `globalThis[Symbol.for('bddx.registry.v1')]`), `resetGlobalRegistry()`, `callerLocation()` |
-| `api.ts` | Global user API: `Given/When/Then/Step`, `BeforeAll/AfterAll`, `BeforeFeature/AfterFeature`, `BeforeRule/AfterRule`, `Before/After` (= `BeforeScenario/AfterScenario`), `BeforeStep/AfterStep`, `defineParameterType`, `setDefaultTimeout` |
-| `executor.ts` | `Executor` / `execute()`: the serial run loop, hooks, contexts, events, summary |
+| `api.ts` | Global user API: `Given/When/Then/Step`, `BeforeAll/AfterAll` (= `BeforeSuite/AfterSuite`), `BeforeWorker/AfterWorker`, `BeforeGroup/AfterGroup`, `BeforeFeature/AfterFeature`, `BeforeRule/AfterRule`, `Before/After` (= `BeforeScenario/AfterScenario`), `BeforeStep/AfterStep`, `defineParameterType`, `setDefaultTimeout`, `setRetryAnalyzer` |
+| `executor.ts` | `Executor` / `execute()`: plan execution (lazy ref-counted scopes), hooks, contexts, step repeat/retry, scenario/group retry, soft asserts, events, summary; coordinator mode and worker mode for the process pool |
+| `scheduler.ts` | `schedule(plan, callbacks)`: ready queue by priority, lanes (`workers`), group modes/caps, locks, exclusive, dependency waits, group-retry settling |
+| `pool.ts` | Process pool: IPC protocol, `ProcessPool` (parent), `serveWorker` (child), `planFingerprint`, worker errors |
+| `logger.ts` | Levelled logger, global `log` attributed through AsyncLocalStorage, `ctx.log.image` |
 | `context.ts` | `Store` (typed key/value) and `Scope` (store + LIFO `defer()` cleanups) |
 | `decorators.ts` | Class-based steps: `@Steps()` class decorator, pending-method collection, per-scenario DI container (`resolve`, `CONTEXT` token, `static inject`, `dispose()`) |
 | `datatable.ts` | `DataTable` (`raw/rows/hashes/rowsHash/asObjects/transpose`), `DocString` |
@@ -170,7 +176,7 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 | `ndjson` | Every event as one JSON line. Option `outputFile` (default `reports/bddx.ndjson`) |
 | `html` | Single self-contained page: summary, groups, filters (status, log level, framework logs, search), scenarios with steps, errors, snippets, skip reasons, logs + images, attachments, run-level logs and hook failures. Options `outputFile` (default `reports/report.html`), `title`, `logLevel` |
 | `cucumber-json` (alias `json`) | Legacy Cucumber JSON (features → elements → steps, ns durations, embeddings) for existing dashboards. Option `outputFile` (default `reports/cucumber.json`) |
-| `junit` | One testsuite per feature. failed/undefined/ambiguous → `<failure>`, skipped/pending → `<skipped>`. Option `outputFile`, `suiteName` |
+| `junit` | One testsuite per feature. failed/undefined/ambiguous → `<failure>`, skipped/pending → `<skipped>`, retried attempts before a pass → `<flakyFailure>`, quarantined failures → `<skipped>`, logs in `<system-out>`/`<system-err>`. Option `outputFile`, `suiteName` |
 
 `createReporter(spec)` accepts `'name'`, `'name:outputFile'`, `['name', options]` or a `Reporter` object.
 
@@ -178,15 +184,17 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 
 | File | Responsibility |
 | --- | --- |
-| `config.ts` | `BddxConfig`, `defineConfig`, `loadConfig()` (ts/mts/js/mjs/json), profiles, `mergeOptions()` (tags ANDed, params merged) |
-| `run.ts` | `runBddx()` pipeline; `registerTypeScriptLoader()` (tsx `register()`); spec & support-file discovery |
-| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run`, `list` and `snippets` commands, help, exit codes |
+| `config.ts` | `BddxConfig`, `defineConfig`, `loadConfig()` (ts/mts/js/mjs/json), profiles, `mergeOptions()` (tags ANDed, params/groups/retry merged), `--set` (`applySetOverrides`, `OPTION_KEYS`) |
+| `run.ts` | `prepareRun()` (config → specs → selection → plan, incl. `--rerun-failed`), `runBddx()` pipeline (support code, reporters, Executor, process pool), `prepareWorker()`, `reportFromEvents()` (`bddx report`); `registerTypeScriptLoader()` (tsx `register()`) |
+| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run`, `list`, `snippets`, `plan`, `report` commands, help, exit codes |
+| `worker.ts` | Worker process entry for `pool: 'process'` (`serveWorker(prepareWorker)`) |
 | `bin.ts` | `#!/usr/bin/env node` entry |
 
 **`runBddx()` pipeline**: register tsx → load config (+profile) → merge CLI overrides → discover specs
 (paths/globs/`file:line`) → parse → select → import support files (they register on the global registry) →
 create reporters (output paths resolved against the config folder; specs parsed with `parseSpecAsync` and a
-file data loader built from `dataDir` + `--profile`) → `Executor.execute()` → flush bus →
+file data loader built from `dataDir` + `--profile`) → build the plan → `Executor.execute()` (with a `ProcessPool`
+when `pool: 'process'`) → flush bus →
 close reporters → exit code.
 
 Path rules: config globs are relative to the config file's folder (rootDir). CLI positional paths are relative to

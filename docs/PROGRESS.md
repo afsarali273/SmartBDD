@@ -1,8 +1,9 @@
 # Progress log
 
-The single source of truth for "where are we". Update it at the end of every work session (see CLAUDE.md).
+The single source of truth for "where are we" and the session history. Update it at the end of every work session
+(see CLAUDE.md). For a feature-by-feature summary of what is done and what remains, see [STATUS.md](STATUS.md).
 
-## Current state (2026-11-15, session 4)
+## Current state (2026-11-15, session 5)
 
 - **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
 - **Phase 3:** done (incl. worker processes `--pool process`) except `@requires`, timeline view, `workerStarted` events.
@@ -28,12 +29,14 @@ Do not start it without the owner.
 ## Known gaps / caveats
 
 - `.md` specs use Cucumber's Markdown-with-Gherkin (MDG) syntax (`# Feature:`, `## Scenario:`, `* Given`), not Gauge's
-  format. Gauge-style Markdown is a Phase 2 item.
-- Hook levels `worker`, `group`, `attempt` do not exist yet (phases 3–4).
-- Console reporter does not print attachments or logs (they are in NDJSON).
+  format. Gauge-style Markdown overlaps with the parked code-linked Markdown design.
+- Process pool: feature/rule/group hooks run once per process that runs a member; `ctx.feature`/`ctx.groups` stores
+  and module-level variables are per process. Cross-process state: `ctx.export`/`ctx.from` or an external system.
+- A worker crash mid-scenario loses that process's After* hooks (the scenario fails; the lane respawns).
+- Console reporter prints logs (by `--log-level`) but not attachments (those are in HTML/NDJSON).
 - Run-level hook failures are summarised under "Hook failures:" in console output, not per scenario.
 - `bddx list` does not load support code, so it cannot flag undefined steps (use `--dry-run`).
-- Working copy: `/Users/afsarali/Repository/AI_Projects/BDD_Framework` (all future work goes here directly).
+- No `attempt` hook level: by design (scenario hooks run per attempt; step hooks have `eachAttempt`).
 
 ## Session log
 
@@ -165,3 +168,10 @@ Worked directly in the user's folder via device shell.
   pools; `npm run example:orchestration:process` in verify.
 - tests: `runtime/test/pool.test.ts` (fake in-process pool: protocol, hooks, exports, retries, crash, BeforeWorker
   failure, inline worker hooks); CLI e2e `fixtures/pool-project` (real processes, crash, init failure, parity). 148 tests.
+
+### 2026-11-15: Session 5b (documentation pass)
+
+- New `docs/STATUS.md`: one-page summary of everything done (feature inventory, hook lifecycle table, tag/config/CLI
+  reference) and everything remaining (next phases, leftovers, known limitations, parked items, idea sources).
+- Brought README, CLAUDE.md, ROADMAP, IMPLEMENTATION (package tables: plan/, step-tags, events-merge, scheduler, pool,
+  logger, worker.ts) and this file in line with the code; CLI help lists the `html` reporter.
