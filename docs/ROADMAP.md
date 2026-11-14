@@ -78,7 +78,7 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [x] `bddx plan --explain <id>`
 - [x] Dependencies of selected scenarios are pulled in by default (`--no-deps` to disable); deps resolved across all spec files
 - [x] Scheduler (`runtime/src/scheduler.ts`): ready queue by priority, workers, group modes/caps, locks, exclusive (in-process async)
-- [ ] Worker processes (child_process fork), IPC of events, worker hooks + worker store (NEXT)
+- [x] Worker processes (`pool: 'process'`, child_process fork), IPC of events, BeforeWorker/AfterWorker, run-store seed, crash recovery
 - [x] Group hooks (BeforeGroup/AfterGroup) + group store (`ctx.groups[name]`); feature/rule/group scopes ref-counted
 - [x] Hard vs soft dependencies; skip reason `dependency failed: <id> (<status>)`; group `onDependencyFailure`
 - [x] Exports between scenarios (`ctx.export`, `ctx.from(id).get`), structured-clone copies (ready for processes)

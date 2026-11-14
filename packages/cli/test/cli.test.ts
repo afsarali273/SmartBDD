@@ -17,13 +17,18 @@ const dataProject = fileURLToPath(new URL('./fixtures/data-project/', import.met
 const orchestration = fileURLToPath(new URL('../../../examples/orchestration/', import.meta.url));
 const resilience = fileURLToPath(new URL('../../../examples/resilience/', import.meta.url));
 const rerunProject = fileURLToPath(new URL('./fixtures/rerun-project/', import.meta.url));
+const poolProject = fileURLToPath(new URL('./fixtures/pool-project/', import.meta.url));
 
 function bddx(...args: string[]) {
   return bddxIn(project, ...args);
 }
 
 function bddxIn(cwd: string, ...args: string[]) {
-  const r = spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
+  return bddxEnv(cwd, {}, ...args);
+}
+
+function bddxEnv(cwd: string, env: Record<string, string>, ...args: string[]) {
+  const r = spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', ...env } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -202,5 +207,57 @@ describe.skipIf(!built)('applySetOverrides', () => {
     });
     expect(base.groups.x).toEqual({ mode: 'parallel' }); // input not mutated
     expect(() => applySetOverrides(base, ['params.a.b=1'])).toThrow(/"a" is not an object/);
+  });
+
+  describe('worker processes (--pool process)', () => {
+    const traceFile = () => join(mkdtempSync(join(tmpdir(), 'bddx-pool-')), 'trace.txt');
+    const count = (text: string, line: string) => text.split('\n').filter((l) => l.startsWith(line)).length;
+
+    it('runs on separate processes: run hooks once in the parent, worker/feature hooks per process, exports + seed cross over', () => {
+      const t = traceFile();
+      const r = bddxIn(poolProject, 'run', '-D', `trace=${t}`);
+      expect(r.code, r.out + r.err).toBe(0);
+      expect(r.out).toContain('8 scenarios (8 passed)');
+      expect(r.out).toContain('run store key(s) [notCloneable]');
+      const trace = readFileSync(t, 'utf8');
+      expect(count(trace, 'beforeAll parent')).toBe(1);
+      expect(count(trace, 'afterAll parent')).toBe(1);
+      expect(count(trace, 'beforeWorker w')).toBe(2);
+      expect(count(trace, 'afterWorker w')).toBe(2);
+      expect(count(trace, 'beforeFeature w')).toBe(count(trace, 'afterFeature w'));
+      const pids = new Set(trace.split('\n').filter((l) => l.startsWith('scenario ')).map((l) => l.split(' ')[1]));
+      expect(pids.size).toBe(2);
+    });
+
+    it('same results as the inline pool', () => {
+      const inline = bddxIn(poolProject, 'run', '--pool', 'inline');
+      expect(inline.code).toBe(0);
+      expect(inline.out).toContain('8 scenarios (8 passed)');
+      const t = traceFile();
+      bddxIn(poolProject, 'run', '--pool', 'inline', '-D', `trace=${t}`);
+      expect(count(readFileSync(t, 'utf8'), 'beforeWorker inline')).toBe(1);
+      const res = bddxIn(resilience, 'run', '--pool', 'process');
+      expect(res.out).toMatch(/6 scenarios \(5 passed, 1 failed\) · 2 flaky, 2 retried, 1 quarantined/);
+      expect(res.code).toBe(0);
+    });
+
+    it('a crashing worker fails only its scenario; the run continues', () => {
+      const r = bddxIn(poolProject, 'run', '-D', 'crash=yes');
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/worker w\d \(pid \d+\) exited unexpectedly \(code 3\)/);
+      expect(r.out).toContain('8 scenarios (7 passed, 1 failed)');
+    });
+
+    it('a worker that cannot start stops the run with the cause', () => {
+      const r = bddxEnv(poolProject, { BDDX_TEST_BREAK_WORKER: '1' }, 'run');
+      expect(r.code).toBe(1);
+      expect(r.out + r.err).toContain('failed to start: support code broken in workers');
+    });
+
+    it('rejects a bad --pool value', () => {
+      const r = bddxIn(poolProject, 'run', '--pool', 'threads');
+      expect(r.code).toBe(2);
+      expect(r.err).toContain('--pool must be inline or process');
+    });
   });
 });

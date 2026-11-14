@@ -52,6 +52,7 @@ import { Scope, Store } from './context.js';
 import { DataTable, DocString } from './datatable.js';
 import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
+import { WorkerCrashedError, WorkerInitError, type CloseResult, type NodeRequest, type NodeResult, type RemotePool, type ScopeRef, type WorkerExecutor } from './pool.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
 import { PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
 import type {
@@ -83,6 +84,13 @@ export interface ExecuteOptions {
   retry?: RetryOptions;
   /** Default time budget per scenario attempt (ms); `@timeout:<dur>` on a scenario overrides. 0/undefined = none. */
   scenarioTimeoutMs?: number;
+  /**
+   * Coordinator mode (`pool: 'process'`): nodes run in worker processes through this pool. The coordinator runs
+   * BeforeAll/AfterAll, scheduling, retries, the summary and feature/group lifecycle EVENTS; workers run everything else.
+   */
+  pool?: RemotePool;
+  /** Worker mode: this Executor lives in a worker process and is driven by serveWorker (initWorker/runAssigned/…). */
+  remoteWorker?: boolean;
 }
 
 export interface RetryOptions {
@@ -122,7 +130,7 @@ interface OpenScope {
   members: string[];
 }
 
-export class Executor {
+export class Executor implements WorkerExecutor {
   private readonly summary = emptySummary();
   private readonly statuses = new Map<string, Status>();
   private readonly params: Readonly<Record<string, string>>;
@@ -144,6 +152,10 @@ export class Executor {
   private readonly rules = new Map<string, OpenScope>();
   private readonly groups = new Map<string, OpenScope>();
   private readonly remaining = { features: new Map<string, number>(), rules: new Map<string, number>(), groups: new Map<string, number>() };
+  /** Coordinator mode: which workers may have opened each scope ('feature:<uri>', 'rule:<key>', 'group:<name>'). */
+  private readonly touchedBy = new Map<string, Set<string>>();
+  /** Worker mode: BeforeWorker failed, so every node assigned here is skipped with this reason. */
+  private workerFatal: string | undefined;
 
   constructor(private readonly opts: ExecuteOptions) {
     this.params = Object.freeze({ ...(opts.params ?? {}) });
@@ -210,12 +222,23 @@ export class Executor {
         this.runFailed = true;
         this.runError ??= outcome.error;
       }
+      if (this.opts.pool) {
+        if (!this.stopReason) await this.opts.pool.start(this.runStoreSeed());
+      } else if (!this.stopReason) {
+        // inline pool: this process is the only worker
+        const w = await this.runHooks('worker', 'before', runCtx, () => true, {});
+        if (w.status === 'failed') {
+          this.stopReason = `BeforeWorker hook "${w.hookName}" failed`;
+          this.runFailed = true;
+          this.runError ??= w.error;
+        }
+      }
     }
 
     await schedule(
       plan,
       {
-        runNode: (node, workerId) => this.runNode(node, workerId),
+        runNode: (node, workerId) => (this.opts.pool ? this.runRemote(node, workerId) : this.runNode(node, workerId)),
         skipNode: async (node, reason) => {
           this.debug(`skip ${node.id}: ${reason}`, { scenarioId: node.id });
           this.skipScenario(node.scenario, reason, 'scheduler');
@@ -228,6 +251,16 @@ export class Executor {
     );
 
     if (!this.opts.dryRun) {
+      if (this.opts.pool) {
+        const stopped = await this.opts.pool.stop();
+        if (stopped.runFailed) this.runFailed = true;
+      } else {
+        const w = await this.runHooks('worker', 'after', runCtx, () => true, {});
+        if (w.status === 'failed') {
+          this.runFailed = true;
+          this.runError ??= w.error;
+        }
+      }
       const after = await this.runHooks('run', 'after', runCtx, () => true, {});
       if (after.status === 'failed') {
         this.runFailed = true;
@@ -316,6 +349,8 @@ export class Executor {
 
   /** Decrement scope counters; close scopes whose last member is done (rule, feature, then groups). */
   private async release(node: PlanNode): Promise<void> {
+    if (this.opts.remoteWorker) return; // the coordinator decides when scopes close (closeScopes)
+    if (this.opts.pool) return this.releaseRemote(node);
     const s = node.scenario;
     if (s.rule && dec(this.remaining.rules, ruleKey(s)) === 0) await this.closeRule(s);
     if (dec(this.remaining.features, s.uri) === 0) await this.closeFeature(s.feature);
@@ -336,7 +371,7 @@ export class Executor {
     const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
     this.features.set(s.uri, entry);
     entry.opened = (async () => {
-      this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
+      if (!this.opts.remoteWorker) this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
       if (this.opts.dryRun) return undefined;
       const ctx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {});
       const before = await this.runHooks('feature', 'before', ctx, tagFilter(s.feature.tags.map((t) => t.name)), { uri: s.uri });
@@ -364,6 +399,7 @@ export class Executor {
       }
     }
     if (f.hookFailed) this.runFailed = true;
+    if (this.opts.remoteWorker) return;
     const members = this.plan.nodes.filter((n) => n.scenario.uri === feature.uri).map((n) => this.statuses.get(n.id) ?? 'skipped');
     this.opts.bus.emit({
       type: 'featureFinished',
@@ -410,7 +446,7 @@ export class Executor {
     const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
     this.groups.set(name, entry);
     entry.opened = (async () => {
-      this.opts.bus.emit({ type: 'groupStarted', group: name });
+      if (!this.opts.remoteWorker) this.opts.bus.emit({ type: 'groupStarted', group: name, ...this.groupAttempt(name) });
       if (this.opts.dryRun) return undefined;
       const ctx = this.makeGroupContext(scope, name);
       const before = await this.runHooks('group', 'before', ctx, groupFilter(name), {});
@@ -437,8 +473,244 @@ export class Executor {
       }
     }
     if (g.hookFailed) this.runFailed = true;
+    if (this.opts.remoteWorker) return;
     const members = (this.plan.groups.get(name)?.members ?? []).map((id) => this.statuses.get(id) ?? 'skipped');
-    this.opts.bus.emit({ type: 'groupFinished', group: name, status: g.hookFailed ? 'failed' : worstStatus(members) });
+    this.opts.bus.emit({ type: 'groupFinished', group: name, status: g.hookFailed ? 'failed' : worstStatus(members), ...this.groupAttempt(name) });
+  }
+
+  private groupAttempt(name: string): { attempt?: number } {
+    const a = this.groupAttempts.get(name);
+    return a && a > 1 ? { attempt: a } : {};
+  }
+
+  // ---------------------------------------------------------------- coordinator mode (pool: 'process')
+
+  /** Run store values that survive structured clone; workers start with a copy. */
+  private runStoreSeed(): Record<string, unknown> {
+    const seed: Record<string, unknown> = {};
+    const skipped: string[] = [];
+    for (const key of this.runScope.store.keys()) {
+      try {
+        seed[key] = structuredClone(this.runScope.store.get(key));
+      } catch {
+        skipped.push(key);
+      }
+    }
+    if (skipped.length) {
+      this.opts.bus.emit({
+        type: 'log',
+        level: 'warn',
+        source: 'bddx',
+        message:
+          `run store key(s) [${skipped.join(', ')}] set in BeforeAll cannot be copied to worker processes (not serialisable). ` +
+          `Create per-process resources (browsers, connections) in BeforeWorker instead.`,
+      });
+    }
+    return seed;
+  }
+
+  private touch(key: string, workerId: string): void {
+    let set = this.touchedBy.get(key);
+    if (!set) this.touchedBy.set(key, (set = new Set()));
+    set.add(workerId);
+  }
+
+  private async runRemote(node: PlanNode, workerId: string): Promise<Status> {
+    const pool = this.opts.pool!;
+    const s = node.scenario;
+    const marker = (): OpenScope => ({ scope: this.runScope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) });
+    try {
+      for (const g of this.realGroups(node)) {
+        if (!this.groups.has(g)) {
+          this.groups.set(g, marker());
+          this.opts.bus.emit({ type: 'groupStarted', group: g, ...this.groupAttempt(g) });
+        }
+        this.touch(`group:${g}`, workerId);
+      }
+      if (!this.features.has(s.uri)) {
+        this.features.set(s.uri, marker());
+        this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
+      }
+      this.touch(`feature:${s.uri}`, workerId);
+      if (s.rule) this.touch(`rule:${ruleKey(s)}`, workerId);
+      const groupAttempts: Record<string, number> = {};
+      for (const g of node.groups) {
+        const a = this.groupAttempts.get(g);
+        if (a) groupAttempts[g] = a;
+      }
+      let res: NodeResult;
+      try {
+        res = await pool.run({
+          nodeId: node.id,
+          workerId,
+          attemptBase: this.attemptsUsed.get(node.id) ?? 0,
+          failedBefore: this.failedBefore.has(node.id),
+          groupAttempts,
+        });
+      } catch (e) {
+        if (e instanceof WorkerInitError) {
+          this.stopReason ??= 'a worker process failed to start';
+          this.runFailed = true;
+          this.runError ??= e;
+        }
+        // crashed (or failed to start): the scenario fails; the lane gets a fresh process next time
+        const attempt = (this.attemptsUsed.get(node.id) ?? 0) + 1;
+        this.attemptsUsed.set(node.id, attempt);
+        this.failedBefore.add(node.id);
+        this.lastStepStatuses.set(node.id, []);
+        const err = e instanceof WorkerCrashedError || e instanceof WorkerInitError ? e : new WorkerCrashedError(toErrorInfo(e).message);
+        this.finishScenario(s, attempt, 'failed', 0, err, undefined, { quarantined: !!node.quarantined });
+        pool.publish(node.id, 'failed', undefined);
+        if (this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
+        return 'failed';
+      }
+      this.attemptsUsed.set(node.id, res.attempts);
+      this.lastStepStatuses.set(node.id, res.stepStatuses);
+      this.statuses.set(node.id, res.status);
+      if (res.failedBefore) this.failedBefore.add(node.id);
+      if (res.flaky) this.flaky.add(node.id);
+      else this.flaky.delete(node.id);
+      if (res.exports) this.exportsById.set(node.id, res.exports);
+      else this.exportsById.delete(node.id);
+      if (res.runFailed) this.runFailed = true;
+      pool.publish(node.id, res.status, res.exports);
+      if (res.status === 'failed' && this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
+      return res.status;
+    } finally {
+      await this.release(node);
+    }
+  }
+
+  /** Coordinator: when a scope's last member is done, close it in every worker that may have opened it. */
+  private async releaseRemote(node: PlanNode): Promise<void> {
+    const s = node.scenario;
+    const refs: ScopeRef[] = [];
+    if (s.rule && dec(this.remaining.rules, ruleKey(s)) === 0) refs.push({ kind: 'rule', key: ruleKey(s), scenarioId: s.id });
+    if (dec(this.remaining.features, s.uri) === 0) refs.push({ kind: 'feature', key: s.uri, scenarioId: s.id });
+    for (const g of this.realGroups(node)) if (dec(this.remaining.groups, g) === 0) refs.push({ kind: 'group', key: g });
+    if (!refs.length) return;
+    const workers = new Set<string>();
+    for (const r of refs) {
+      const k = `${r.kind}:${r.key}`;
+      for (const w of this.touchedBy.get(k) ?? []) workers.add(w);
+      this.touchedBy.delete(k);
+    }
+    const closed: CloseResult = workers.size ? await this.opts.pool!.close([...workers], refs) : { failed: [], runFailed: false };
+    if (closed.runFailed || closed.failed.length) this.runFailed = true;
+    for (const r of refs) {
+      const failed = closed.failed.includes(r.key);
+      if (r.kind === 'feature' && this.features.has(r.key)) {
+        const members = this.plan.nodes.filter((n) => n.scenario.uri === r.key).map((n) => this.statuses.get(n.id) ?? 'skipped');
+        this.opts.bus.emit({ type: 'featureFinished', uri: r.key, name: s.feature.name, status: failed ? 'failed' : worstStatus(members) });
+      }
+      if (r.kind === 'group' && this.groups.has(r.key)) {
+        const members = (this.plan.groups.get(r.key)?.members ?? []).map((id) => this.statuses.get(id) ?? 'skipped');
+        this.opts.bus.emit({ type: 'groupFinished', group: r.key, status: failed ? 'failed' : worstStatus(members), ...this.groupAttempt(r.key) });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- worker mode (inside a worker process)
+
+  /** Worker process start: seed the run store, BeforeWorker hooks. */
+  async initWorker(seed: Record<string, unknown>): Promise<void> {
+    this.opts.registry.finalize();
+    this.plan = this.opts.plan!;
+    for (const [k, v] of Object.entries(seed)) this.runScope.store.set(k, v);
+    const runCtx = this.makeRunContext(this.runScope, {});
+    setFallbackLogger(runCtx.log);
+    const w = await this.runHooks('worker', 'before', runCtx, () => true, {});
+    if (w.status === 'failed') {
+      this.workerFatal = `BeforeWorker hook "${w.hookName}" failed`;
+      this.runFailed = true;
+    }
+  }
+
+  /** Run one plan node (all its scenario-retry attempts) as instructed by the coordinator. */
+  async runAssigned(req: NodeRequest): Promise<NodeResult> {
+    const node = this.plan.byId.get(req.nodeId);
+    if (!node) throw new Error(`worker: unknown scenario id ${req.nodeId}`);
+    for (const [id, st, ex] of req.finished ?? []) {
+      this.statuses.set(id, st);
+      if (ex) this.exportsById.set(id, ex);
+      else this.exportsById.delete(id);
+    }
+    this.statuses.delete(node.id); // it is about to run (again)
+    this.attemptsUsed.set(node.id, req.attemptBase);
+    if (req.failedBefore) this.failedBefore.add(node.id);
+    else this.failedBefore.delete(node.id);
+    for (const [g, a] of Object.entries(req.groupAttempts)) this.groupAttempts.set(g, a);
+    let status: Status;
+    if (this.workerFatal) {
+      this.attemptsUsed.set(node.id, req.attemptBase + 1);
+      status = this.skipScenario(node.scenario, this.workerFatal, req.workerId);
+    } else {
+      status = await this.runNode(node, req.workerId);
+    }
+    const exports = this.exportsById.get(node.id);
+    return {
+      status,
+      attempts: this.attemptsUsed.get(node.id) ?? 1,
+      stepStatuses: this.lastStepStatuses.get(node.id) ?? [],
+      flaky: this.flaky.has(node.id),
+      failedBefore: this.failedBefore.has(node.id),
+      ...(exports ? { exports } : {}),
+      runFailed: this.runFailed,
+    };
+  }
+
+  /** Close scopes this process opened (After* hooks + cleanups). Unopened ones are ignored. */
+  async closeScopes(scopes: readonly ScopeRef[]): Promise<CloseResult> {
+    const failed: string[] = [];
+    for (const ref of scopes) {
+      if (ref.kind === 'group') {
+        const g = this.groups.get(ref.key);
+        if (!g) continue;
+        await this.closeGroup(ref.key);
+        if (g.hookFailed) failed.push(ref.key);
+        this.groups.delete(ref.key);
+        continue;
+      }
+      const s = this.plan.byId.get(ref.scenarioId ?? '')?.scenario;
+      if (!s) continue;
+      if (ref.kind === 'rule') {
+        const r = this.rules.get(ref.key);
+        if (!r) continue;
+        await this.closeRule(s);
+        if (r.hookFailed) failed.push(ref.key);
+        this.rules.delete(ref.key);
+      } else {
+        const f = this.features.get(ref.key);
+        if (!f) continue;
+        await this.closeFeature(s.feature);
+        if (f.hookFailed) failed.push(ref.key);
+        this.features.delete(ref.key);
+      }
+    }
+    return { failed, runFailed: this.runFailed };
+  }
+
+  /** Worker process end: close anything still open, AfterWorker hooks, run-scope cleanups. */
+  async shutdownWorker(): Promise<{ runFailed: boolean }> {
+    for (const key of [...this.rules.keys()]) {
+      const id = this.plan.nodes.find((n) => n.scenario.rule && ruleKey(n.scenario) === key)?.id;
+      await this.closeScopes([{ kind: 'rule', key, ...(id ? { scenarioId: id } : {}) }]);
+    }
+    for (const uri of [...this.features.keys()]) {
+      const id = this.plan.nodes.find((n) => n.scenario.uri === uri)?.id;
+      await this.closeScopes([{ kind: 'feature', key: uri, ...(id ? { scenarioId: id } : {}) }]);
+    }
+    for (const g of [...this.groups.keys()]) await this.closeScopes([{ kind: 'group', key: g }]);
+    const runCtx = this.makeRunContext(this.runScope, {});
+    const w = await this.runHooks('worker', 'after', runCtx, () => true, {});
+    if (w.status === 'failed') this.runFailed = true;
+    const cleanupErrors = await this.runScope.close();
+    if (cleanupErrors.length) {
+      this.runFailed = true;
+      this.emitHookLikeError('worker', 'after', 'worker cleanup (defer)', cleanupErrors[0], {});
+    }
+    setFallbackLogger(undefined);
+    return { runFailed: this.runFailed };
   }
 
 // ---------------------------------------------------------------- scenarios

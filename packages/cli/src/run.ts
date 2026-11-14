@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { glob } from 'tinyglobby';
 import {
   EventBus,
@@ -21,7 +22,7 @@ import {
   type RunSummary,
   type ScenarioInstance,
 } from '@bddx/core';
-import { Executor, getGlobalRegistry, type RetryOptions } from '@bddx/runtime';
+import { Executor, ProcessPool, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
 import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
 import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
 
@@ -55,6 +56,10 @@ export interface RunRequest {
   failOnFlaky?: boolean;
   /** NDJSON events of an earlier run: run only scenarios that did not pass there (plus their dependencies). */
   rerunFailed?: string;
+  /** 'inline' (default) or 'process' (overrides config `pool`). */
+  pool?: 'inline' | 'process';
+  /** Internal: no CLI diagnostics (worker processes repeat the parent's preparation). */
+  quiet?: boolean;
 }
 
 export interface RunOutcome {
@@ -139,6 +144,7 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   if (req.strict !== undefined) cliOverrides.strict = req.strict;
   if (req.stepTimeoutMs !== undefined) cliOverrides.stepTimeoutMs = req.stepTimeoutMs;
   if (req.workers !== undefined) cliOverrides.workers = req.workers;
+  if (req.pool !== undefined) cliOverrides.pool = req.pool;
   opts = mergeOptions(opts, cliOverrides);
 
   // CLI paths are relative to cwd; config globs are relative to rootDir.
@@ -187,7 +193,7 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
     ...(opts.groups ? { groups: opts.groups } : {}),
     ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
   });
-  cliDebug(opts.logLevel, [
+  cliDebug(req.quiet ? undefined : opts.logLevel, [
     `config: ${loaded.configFile ?? '(none, defaults)'}${req.profile ? `, profile ${req.profile}` : ''}`,
     ...(req.sets?.length ? [`--set: ${req.sets.join(' ')}`] : []),
     `specs: ${files.length} selected file(s), ${allFiles.length} parsed; scenarios: ${all.length} total, ${selected.length} selected`,
@@ -209,12 +215,7 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
     return { success: false, exitCode: 2, scenarios: plan.nodes.map((n) => n.scenario) };
   }
 
-  // Support code: steps, hooks, parameter types. They register on the global registry.
-  const registry = getGlobalRegistry();
-  const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
-  for (const f of supportFiles) await import(pathToFileURL(f).href);
-  cliDebug(opts.logLevel, [`support code: ${supportFiles.length} file(s), ${registry.stepDefinitions.length} step(s), ${registry.hookDefinitions.length} hook(s)`]);
-  if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
+  const registry = await loadSupportCode(rootDir, opts, req.quiet);
 
   const reporters =
     req.reporters ??
@@ -223,18 +224,36 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   for (const r of reporters) bus.on((e) => r.onEvent(e));
 
   const hasParseErrors = specs.some((s) => s.errors.length > 0);
-  const result = await new Executor({
-    registry,
-    bus,
-    specs,
-    plan,
-    dryRun: !!req.dryRun,
-    failFast: !!opts.failFast,
-    strict: opts.strict ?? true,
-    params: opts.params ?? {},
-    ...(opts.retry ? { retry: toRetryOptions(opts.retry) } : {}),
-    ...(opts.scenarioTimeout !== undefined ? { scenarioTimeoutMs: toMs(opts.scenarioTimeout, 'scenarioTimeout') } : {}),
-  }).execute(plan.nodes.map((n) => n.scenario));
+  const useProcesses = opts.pool === 'process' && !req.dryRun && plan.nodes.length > 0;
+  const pool = useProcesses
+    ? new ProcessPool({
+        ...workerEntry(),
+        init: workerInit(req),
+        planFingerprint: planFingerprint(plan),
+        onEvent: (e) => bus.emit(e),
+      })
+    : undefined;
+  const onSignal = () => {
+    pool?.kill();
+    process.exit(130);
+  };
+  if (pool) process.once('SIGINT', onSignal);
+  let result;
+  try {
+    result = await new Executor({
+      ...executorOptions(opts, req),
+      registry,
+      bus,
+      specs,
+      plan,
+      ...(pool ? { pool } : {}),
+    }).execute(plan.nodes.map((n) => n.scenario));
+  } finally {
+    if (pool) {
+      process.off('SIGINT', onSignal);
+      pool.kill();
+    }
+  }
 
   const listenerErrors = await bus.flush();
   for (const r of reporters) await r.close?.();
@@ -242,6 +261,58 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
 
   const exitCode: 0 | 1 | 2 = hasParseErrors ? 2 : result.success ? 0 : 1;
   return { success: result.success && !hasParseErrors, summary: result.summary, exitCode, scenarios: plan.nodes.map((n) => n.scenario) };
+}
+
+/** Support code: steps, hooks, parameter types. They register on the global registry. */
+async function loadSupportCode(rootDir: string, opts: BddxOptions, quiet = false) {
+  const registry = getGlobalRegistry();
+  const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
+  for (const f of supportFiles) await import(pathToFileURL(f).href);
+  if (!quiet) {
+    cliDebug(opts.logLevel, [`support code: ${supportFiles.length} file(s), ${registry.stepDefinitions.length} step(s), ${registry.hookDefinitions.length} hook(s)`]);
+  }
+  if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
+  return registry;
+}
+
+function executorOptions(opts: BddxOptions, req: RunRequest): Omit<ExecuteOptions, 'registry' | 'bus'> {
+  return {
+    dryRun: !!req.dryRun,
+    failFast: !!opts.failFast,
+    strict: opts.strict ?? true,
+    params: opts.params ?? {},
+    ...(opts.retry ? { retry: toRetryOptions(opts.retry) } : {}),
+    ...(opts.scenarioTimeout !== undefined ? { scenarioTimeoutMs: toMs(opts.scenarioTimeout, 'scenarioTimeout') } : {}),
+  };
+}
+
+/** What a worker process needs to rebuild the same run (structured-cloneable; no reporters). */
+function workerInit(req: RunRequest): RunRequest {
+  const { reporters: _r, formats: _f, dryRun: _d, ...rest } = req;
+  return { ...rest, cwd: resolve(req.cwd ?? process.cwd()), quiet: true };
+}
+
+/** dist/worker.js when built; src/worker.ts (through tsx) when running from source (tests). */
+function workerEntry(): { entry: string; execArgv: string[] } {
+  const js = fileURLToPath(new URL('./worker.js', import.meta.url));
+  if (existsSync(js)) return { entry: js, execArgv: [] };
+  return { entry: fileURLToPath(new URL('./worker.ts', import.meta.url)), execArgv: ['--import', 'tsx'] };
+}
+
+/** Worker process side: prepare the same run, load support code, build an Executor in worker mode. */
+export async function prepareWorker(init: unknown, bus: EventBus): Promise<WorkerSetup> {
+  const req = init as RunRequest;
+  const prepared = await prepareRun(req);
+  const registry = await loadSupportCode(prepared.rootDir, prepared.opts, true);
+  const executor = new Executor({
+    ...executorOptions(prepared.opts, req),
+    failFast: false, // the coordinator stops scheduling
+    registry,
+    bus,
+    plan: prepared.plan,
+    remoteWorker: true,
+  });
+  return { executor, plan: prepared.plan };
 }
 
 export function makeDataLoader(rootDir: string, opts: BddxOptions, profile?: string): DataLoader {

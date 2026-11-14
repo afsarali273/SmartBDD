@@ -29,8 +29,9 @@ Options:
       --no-strict         Pending/undefined steps do not fail the run
       --timeout <ms>      Default step/hook timeout
   -w, --workers <n>       Max scenarios running at once (default 1)
+      --pool <kind>       inline (default: one process) | process (one Node process per worker)
   -s, --set <path=value>  Override any config value (repeatable), e.g. --set groups.checkout.mode=serial
-      --log-level <level> Console logs: debug | info | warn (default) | error | silent
+      --log-level <level> Console logs: debug | info (default) | warn | error | silent
       --no-deps           Do not pull in dependencies of selected scenarios
   -r, --retry <n>         Retry failed scenarios up to n times (config retry.scenario; @retry:N per scenario)
       --fail-on-flaky     Fail the run when a scenario passed only after a retry
@@ -61,6 +62,7 @@ export async function main(argv: string[]): Promise<number> {
         'fail-fast': { type: 'boolean' },
         timeout: { type: 'string' },
         workers: { type: 'string', short: 'w' },
+        pool: { type: 'string' },
         set: { type: 'string', short: 's', multiple: true },
         retry: { type: 'string', short: 'r' },
         'fail-on-flaky': { type: 'boolean' },
@@ -115,6 +117,8 @@ export async function main(argv: string[]): Promise<number> {
       ...(values.set ? { sets: values.set } : {}),
       ...(logLevel ? { logLevel: logLevel as 'debug' } : {}),
     };
+    const pool = values.pool;
+    if (pool !== undefined && pool !== 'inline' && pool !== 'process') throw new UsageError(`--pool must be inline or process (got "${pool}")`);
     if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) throw new UsageError(`--workers expects a positive integer, got "${values.workers}"`);
     if (command === 'plan') {
       const { plan } = await prepareRun({
@@ -152,6 +156,7 @@ export async function main(argv: string[]): Promise<number> {
       ...(noStrict ? { strict: false } : {}),
       ...(values.timeout ? { stepTimeoutMs: Number(values.timeout) } : {}),
       ...(workers ? { workers } : {}),
+      ...(pool ? { pool: pool as 'inline' | 'process' } : {}),
       ...(noDeps ? { withDeps: false } : {}),
       ...(retry !== undefined ? { retry } : {}),
       ...(values['fail-on-flaky'] ? { failOnFlaky: true } : {}),

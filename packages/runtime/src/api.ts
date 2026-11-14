@@ -94,7 +94,15 @@ export const After = makeHook<ScenarioHookFn>('scenario', 'after');
 export const BeforeStep = makeHook<ScenarioHookFn>('step', 'before');
 export const AfterStep = makeHook<ScenarioHookFn>('step', 'after');
 
-/** TestNG-style aliases. Suite = the whole run (one process today; per worker in phase 3 → see BeforeWorker). */
+/**
+ * Once per process that runs scenarios: with `pool: 'process'` in every worker process (start / end), with the
+ * default inline pool once per run (right after BeforeAll / before AfterAll). Put per-process resources here
+ * (browser instances, DB connections, servers on BDDX_WORKER_INDEX-based ports); `ctx.run` is that process's store.
+ */
+export const BeforeWorker = makeHook<RunHookFn>('worker', 'before');
+export const AfterWorker = makeHook<RunHookFn>('worker', 'after');
+
+/** TestNG-style aliases. Suite = the whole run: BeforeAll runs once, in the parent process, even with worker processes. */
 export const BeforeSuite = BeforeAll;
 export const AfterSuite = AfterAll;
 export const BeforeScenario = Before;

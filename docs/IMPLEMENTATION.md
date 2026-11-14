@@ -21,7 +21,8 @@ Last updated: 2026-11-15 (Phases 0–1 done, Phase 2 data core done, Phase 3 pla
 
 The **Planner** (`core/src/plan`) turns the selection into a validated graph; the **Scheduler**
 (`runtime/src/scheduler.ts`) decides what runs when; the **Executor** runs nodes and owns scopes/hooks/events.
-`Executor.runScenario()` is the unit future worker processes will call, so keep it free of global state.
+Worker processes (`pool: 'process'`) drive the same Executor in "worker mode" (§2f), so keep scenario execution free of
+global state.
 
 ## 2. Own core, swappable third-party parts (ports & adapters)
 
@@ -280,6 +281,48 @@ happen first, inside each member run.
 summary extras; group-retried failures are removed from "Failures". JUnit: Surefire `<flakyFailure>` per earlier failed
 attempt; quarantined failures become `<skipped message="quarantined: …">`. HTML: flaky/quarantined/attempt badges,
 earlier attempts list, group retries in the Run section, stack traces trimmed to user frames (`trimStack`).
+
+## 2f. Worker processes (`pool: 'process'`)
+
+`pool: 'inline'` (default) runs every scenario in one Node process with async concurrency (`workers` = lanes).
+`pool: 'process'` (`--pool process`) backs every scheduler lane w1…wN with its own Node process: real CPU parallelism,
+crash isolation, per-process globals (browsers, module state).
+
+```
+parent (coordinator)                                   worker process wK (forked lazily, one per lane)
+  config, specs, plan, scheduler, reporters              same config/specs/plan (fingerprint checked)
+  BeforeAll / AfterAll  (once)                           BeforeWorker / AfterWorker  (once per process)
+  feature/group lifecycle EVENTS, summary,               Before/AfterFeature, Rule, Group hooks (lazily, per
+  retries of groups, fail-fast, rerun bookkeeping          process that runs a member), scenarios, steps,
+                                                           scenario retries, soft asserts, timeouts
+        ── init{request, run-store seed} ──▶
+        ── run{nodeId, attemptBase, failedBefore, finished[]} ──▶   ◀── events (re-emitted as-is) ──
+        ◀── result{status, attempts, stepStatuses, flaky, exports, runFailed} ──
+        ── close{scopes} (when the GLOBAL ref count hits 0) ──▶   ── shutdown ──▶
+```
+
+| Piece | Where |
+| --- | --- |
+| Protocol, `ProcessPool` (parent), `serveWorker` (child), `planFingerprint` | `runtime/src/pool.ts` |
+| Coordinator mode (`ExecuteOptions.pool`): `runRemote`, `releaseRemote`, `runStoreSeed` | `runtime/src/executor.ts` |
+| Worker mode (`remoteWorker: true`): `initWorker`, `runAssigned`, `closeScopes`, `shutdownWorker` | `runtime/src/executor.ts` |
+| Worker entry (rebuilds the run from the parent's RunRequest) | `cli/src/worker.ts`, `prepareWorker` in `cli/src/run.ts` |
+
+**Semantics (owner-facing):**
+- `BeforeAll`/`AfterAll` (= BeforeSuite/AfterSuite) run ONCE in the parent. Run-store values set there are copied
+  (structured clone) into each worker; non-cloneable values are dropped with a warning → create per-process things in
+  `BeforeWorker`. Inline pool: BeforeWorker/AfterWorker run once (after BeforeAll / before AfterAll).
+- Feature/rule/group hooks run in each process that runs a member, so with N processes a BeforeFeature may run up to N
+  times; After* hooks run when the scope's LAST member (globally) is done, so dependents still start after AfterGroup.
+  `ctx.feature` / `ctx.groups` stores are per process. Shared state across processes: `ctx.export`/`ctx.from` (synced
+  by the parent) or an external system (file, DB). Module-level variables are per process.
+- A scenario's attempts (scenario retry) stay in one process; group retry is decided by the parent and may re-run members
+  on any lane. Attempt numbers and "failed before" (flaky) travel with each request.
+- Worker crash (exit / kill) → that scenario fails with `WorkerCrashedError`; the lane respawns a fresh process on its
+  next node (BeforeWorker runs again). Worker init failure (support code throws, plan mismatch) → `WorkerInitError`,
+  the run stops scheduling and fails.
+- Env in workers: `BDDX_WORKER_ID` (`w1`…), `BDDX_WORKER_INDEX` (1…), e.g. for per-worker ports or test accounts.
+- `--dry-run` always uses the inline pool. Ctrl+C kills the workers; a worker exits when the parent disconnects.
 
 ## 2d. Configuration sources and precedence
 

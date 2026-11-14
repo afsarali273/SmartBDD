@@ -17,3 +17,18 @@ export { Executor, execute, type ExecuteOptions, type ExecuteResult, type RetryO
 export { Steps, resolve, CONTEXT, type Constructor, type InjectToken, type MethodDecorator } from './decorators.js';
 export { schedule, type SchedulerCallbacks, type ScheduleOptions } from './scheduler.js';
 export { log, createLogger, withLogger, sniffMediaType, type Logger, type LogFn, type LogImageOptions } from './logger.js';
+export {
+  ProcessPool,
+  serveWorker,
+  planFingerprint,
+  WorkerCrashedError,
+  WorkerInitError,
+  type RemotePool,
+  type NodeRequest,
+  type NodeResult,
+  type ScopeRef,
+  type CloseResult,
+  type ProcessPoolOptions,
+  type WorkerExecutor,
+  type WorkerSetup,
+} from './pool.js';

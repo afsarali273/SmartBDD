@@ -4,7 +4,7 @@ A BDD automation framework that keeps Gherkin's readability and adds TestNG-styl
 groups, dependencies, mixed parallel/serial execution and layered retries.
 TypeScript first, Java next. ("bddx" is a working name.)
 
-> **Status:** Phases 0–1 and 4 complete; Phase 2 data core and Phase 3 orchestration (in-process) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 0–1 and 4 complete; Phase 2 data core and Phase 3 orchestration done (inline or worker processes). See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Quick start
 
@@ -141,6 +141,17 @@ And the page shows "Saved" @timeout:10s
 `@repeat` runs a step N times (`{{i}}`/`{{n}}` = iteration/total); `@retry` re-runs it until it passes. `@concurrency` is
 for API/data steps only; browser steps declare `{ concurrent: false }`. BeforeStep/AfterStep run once per step, or per
 attempt with `{ eachAttempt: true }`.
+
+Parallel in separate processes (real CPU parallelism, crash isolation):
+
+```bash
+bddx run -w 4 --pool process     # or pool: 'process' in the config
+```
+
+```ts
+BeforeAll((ctx) => ctx.run.set('dbUrl', seedDatabase()));          // once, in the parent; copied to workers
+BeforeWorker(async (ctx) => ctx.run.set('browser', await launch())); // once per worker process
+```
 
 Resilience:
 

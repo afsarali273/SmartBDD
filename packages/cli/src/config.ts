@@ -42,8 +42,13 @@ export interface BddxOptions {
    * With --profile <p>, `<dataDir>/<p>/<file>` is tried first.
    */
   dataDir?: string;
-  /** Max scenarios running at once (in-process). Default 1. CLI: --workers. */
+  /** Max scenarios running at once. Default 1. CLI: --workers. */
   workers?: number;
+  /**
+   * Where scenarios run: 'inline' (default, async concurrency in this process) or 'process' (one Node process per
+   * worker: real CPU parallelism and isolation; BeforeWorker/AfterWorker per process). CLI: --pool.
+   */
+  pool?: 'inline' | 'process';
   /**
    * Named groups: mode (parallel | serial | exclusive), workers cap, dependsOn other groups,
    * onDependencyFailure ('skip' | 'run'), priority, locks, match (tag expression for membership).
@@ -67,7 +72,7 @@ export interface BddxOptions {
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'pool',
 ] as const;
 
 /**

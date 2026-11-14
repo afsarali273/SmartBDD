@@ -76,7 +76,7 @@ export class SupportRegistry {
     return def;
   }
 
-  defineHook(level: 'run', kind: HookKind, options: HookOptions, fn: RunHookFn, location?: string): HookDefinition;
+  defineHook(level: 'run' | 'worker', kind: HookKind, options: HookOptions, fn: RunHookFn, location?: string): HookDefinition;
   defineHook(level: 'group', kind: HookKind, options: HookOptions, fn: GroupHookFn, location?: string): HookDefinition;
   defineHook(level: 'feature' | 'rule', kind: HookKind, options: HookOptions, fn: FeatureHookFn, location?: string): HookDefinition;
   defineHook(level: 'scenario' | 'step', kind: HookKind, options: HookOptions, fn: ScenarioHookFn, location?: string): HookDefinition;

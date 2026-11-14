@@ -157,3 +157,15 @@ was discussed and parked by the owner (bddx is an automation framework with BDD-
   `<skipped>` so CI dashboards stay green, and flaky passes to Surefire `<flakyFailure>`.
 - **Rerun + merge** works from NDJSON events (no hidden state files), so it composes with CI artifacts and with the future
   Java engine (same schema).
+
+## ADR-021 Worker processes: parent coordinates, workers execute (2026-11-15)
+
+- **Parent keeps the plan and scheduler**; each lane is a forked process that rebuilds the same run from the CLI request
+  (no AST/plan serialisation) and proves it with a plan fingerprint. Only ids, results and events cross IPC
+  (`serialization: 'advanced'`).
+- **BeforeAll/AfterAll run once in the parent** (TestNG BeforeSuite semantics, e.g. seed a DB once). Per-process setup is
+  the new `worker` hook level (BeforeWorker/AfterWorker), which also exists inline (runs once) so suites are pool-agnostic.
+  Rejected: BeforeAll per worker (Cucumber-js parallel) — surprising for global setup.
+- **Scope hooks run per process, closed by the parent's global ref count**: keeps "AfterGroup before dependents" and lets
+  hooks create process-local resources. Lifecycle events are emitted once by the parent so reports don't duplicate.
+- **Inline stays the default**: zero overhead, shared memory, simplest debugging; `process` is opt-in.

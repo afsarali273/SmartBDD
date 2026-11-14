@@ -5,27 +5,22 @@ The single source of truth for "where are we". Update it at the end of every wor
 ## Current state (2026-11-15, session 4)
 
 - **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
-- **Phase 3:** done except worker processes, `@requires`, timeline view.
+- **Phase 3:** done (incl. worker processes `--pool process`) except `@requires`, timeline view, `workerStarted` events.
 - **Phase 4:** done: scenario retry (+ filters, analyzer), group retry, flaky, quarantine, rerun-failed + `bddx report`
   merge, soft assertions, scenario time budget. Plus step-level `@repeat`/`@retry` (done earlier).
-- **Health:** `npm run verify` green on the user's Mac (137 tests + 3 examples: basic, orchestration, resilience).
+- **Health:** `npm run verify` green on the user's Mac (148 tests + examples: basic, orchestration (inline + process), resilience).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 - **Framing (owner):** an automation framework with BDD-style specs, not BDD-purist. Practical features first.
 
 ## Next up
 
-1. **Worker processes** (Phase 3 remainder): `runtime/src/workers/`. Parent keeps plan + scheduler; N children
-   (`child_process.fork` of a CLI worker entry) load config + support code once; parent sends `runNode {scenarioId,
-   attempt}`; children stream events over IPC; parent re-emits. Exports travel with results. `BeforeWorker/AfterWorker`
-   + worker store. Decide feature/group hook placement for multi-process (likely: feature hooks per worker that runs
-   members; group hooks in the worker that runs the first member — needs an ADR). Keep in-process as default
-   (`--pool inline|process`).
-2. **Phase 5 (reporting/DX):** HTML v2 (timeline per worker, plan graph via mermaid), history + flakiness trend,
-   Cucumber Messages adapter, debug mode, VS Code extension.
-3. **Phase 6:** plugin API, Playwright integration (browser per scenario, screenshot/trace on failure, steps
-   `concurrent:false`), HTTP step library, Allure, AI step catalogue + MCP server.
-4. Phase 2 leftovers: text composite steps, Phase 2 gate. `@requires:<file>`.
+1. **Phase 5 (reporting/DX):** HTML v2 (timeline per worker lane using scenarioStarted.workerId, plan graph via mermaid),
+   history + flakiness trend across runs, Cucumber Messages adapter, debug mode (`--inspect` + one worker), VS Code ext.
+2. **Phase 6:** plugin API, Playwright integration (browser per worker via BeforeWorker, page per scenario,
+   screenshot/trace on failure, browser steps `concurrent:false`), HTTP step library, Allure, AI step catalogue + MCP.
+3. Leftovers: text composite steps + Phase 2 gate; `@requires:<file>`; events `workerStarted`/`waitedForMs`;
+   group time budget; exponential backoff for scenario retries.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
 Do not start it without the owner.
@@ -158,3 +153,15 @@ Worked directly in the user's folder via device shell.
   earlier attempts, group retries, trimmed stack traces.
 - examples/resilience (+ `npm run example:resilience`, in `verify`); fixture `rerun-project`; conformance
   `scenario-retry.feature` (+1 vocabulary step). Tests now 137.
+
+### 2026-11-15: Session 5 (worker processes)
+
+- runtime: `pool.ts` (protocol, `ProcessPool`, `serveWorker`, `planFingerprint`, `WorkerCrashedError`/`WorkerInitError`);
+  Executor coordinator mode (`pool` option: `runRemote`, `releaseRemote`, run-store seed) and worker mode
+  (`remoteWorker`: `initWorker`, `runAssigned`, `closeScopes`, `shutdownWorker`); hook level `worker`
+  (`BeforeWorker`/`AfterWorker`, inline = once); groupStarted/Finished carry `attempt` on group retries.
+- cli: config `pool`, `--pool inline|process`, `worker.ts` entry, `prepareWorker`, SIGINT kills workers.
+- examples/orchestration: fake backend moved from memory to a temp file (BeforeAll → run store) so it runs in both
+  pools; `npm run example:orchestration:process` in verify.
+- tests: `runtime/test/pool.test.ts` (fake in-process pool: protocol, hooks, exports, retries, crash, BeforeWorker
+  failure, inline worker hooks); CLI e2e `fixtures/pool-project` (real processes, crash, init failure, parity). 148 tests.

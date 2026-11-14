@@ -15,7 +15,7 @@ import type { ErrorInfo, ParseErrorInfo, Status } from './model.js';
 
 export const EVENT_SCHEMA_VERSION = 1;
 
-export type HookLevel = 'run' | 'group' | 'feature' | 'rule' | 'scenario' | 'step';
+export type HookLevel = 'run' | 'worker' | 'group' | 'feature' | 'rule' | 'scenario' | 'step';
 export type HookKind = 'before' | 'after';
 
 interface Base {

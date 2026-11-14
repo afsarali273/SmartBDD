@@ -1,8 +1,7 @@
 /**
  * Scoped state.
  *
- * Scopes (outermost first): run > feature > scenario.
- * (Phase 3 adds worker and group scopes between run and feature.)
+ * Scopes (outermost first): run (= the process: seeded from the parent with worker processes) > group > feature > scenario.
  *
  * Each scope owns:
  *  - a Store: a typed key/value map that lives exactly as long as the scope
