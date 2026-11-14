@@ -22,9 +22,18 @@ export interface ScenarioInfo {
 export interface CurrentStepInfo {
   id: string;
   keyword: string;
+  /** Step text for this attempt ({{i}}/{{n}} already substituted). */
   text: string;
   line: number;
+  /** 1-based repetition (@repeat) or attempt (@retry) number; 1 for normal steps. */
+  attempt: number;
+  /** Total repetitions, or max attempts for @retry; 1 for normal steps. */
+  of: number;
+  mode?: 'repeat' | 'retry';
 }
+
+/** Retry default on a step definition: a number of extra attempts, or the full form. Step tags override it. */
+export type StepRetryOption = number | { attempts: number; delay?: number | string; backoff?: number };
 
 /** Context for run-level hooks (BeforeAll / AfterAll). */
 export interface RunContext {
@@ -86,6 +95,14 @@ export interface StepOptions {
   /** Tag expression: the definition only matches in scenarios whose tags satisfy it. */
   tags?: string;
   timeoutMs?: number;
+  /** Default retry for this step (retry until it passes): `3` or `{ attempts: 3, delay: '1s', backoff: 2 }`. */
+  retry?: StepRetryOption;
+  /**
+   * Set false for steps that must never run in parallel with themselves (e.g. they drive a browser page or a
+   * Selenium session, which are not safe for concurrent calls). `@concurrency` on such a step is an error.
+   * Default true (allowed, but steps still run one at a time unless `@concurrency` is used).
+   */
+  concurrent?: boolean;
 }
 
 export interface HookOptions {
@@ -96,6 +113,8 @@ export interface HookOptions {
   order?: number;
   /** Before-hooks only: run even when an earlier before-hook at this level failed. */
   alwaysRun?: boolean;
+  /** Step hooks only: run around EVERY repetition/attempt of @repeat/@retry steps (default: once per step). */
+  eachAttempt?: boolean;
   timeoutMs?: number;
 }
 
@@ -114,6 +133,7 @@ export interface HookDefinition {
   tags?: string;
   order: number;
   alwaysRun: boolean;
+  eachAttempt?: boolean;
   timeoutMs?: number;
   fn: AnyHookFn;
   location?: string;

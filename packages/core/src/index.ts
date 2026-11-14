@@ -1,5 +1,6 @@
 export * from './model.js';
 export * from './tags.js';
+export * from './step-tags.js';
 export * from './ids.js';
 export * from './ports.js';
 export * from './spec-parsers.js';

@@ -26,6 +26,11 @@ Every engine implements exactly these steps (see `ts/steps.ts` for the reference
 | `the table has {int} rows` | asserts data-table body row count |
 | `the doc string says {string}` | asserts doc string content |
 | `a step that sleeps {int} ms` | waits |
+| `a step that passes on attempt {int}` | records `attempt <k>` (k = ctx.step.attempt); throws until k >= n |
+| `a step that fails on repetition {int}` | records `repetition <k>`; throws when k = n |
+
+Step-level tags (`@repeat`, `@retry`, `@delay`, `@backoff`, `@timeout`, `@concurrency`) and `{{i}}`/`{{n}}` placeholders
+are part of the contract (see `step-repeat-retry.feature`).
 
 Hooks used by the suite (registered only for scenarios/features tagged as below):
 

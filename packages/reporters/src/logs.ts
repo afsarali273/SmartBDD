@@ -13,7 +13,7 @@ export function formatLogLine(l: Log, maxData = 2000): string {
     data = ` ${json.length > maxData ? `${json.slice(0, maxData)}…` : json}`;
   }
   const att = l.attachment ? ` [${l.attachment.mediaType.startsWith('image/') ? 'image' : 'file'}: ${l.attachment.name ?? l.attachment.mediaType}, ${kb(l.attachment.bytes)}]` : '';
-  return `[${tag}] ${l.message}${data}${att}`;
+  return `[${tag}]${l.attempt ? ` #${l.attempt}` : ''} ${l.message}${data}${att}`;
 }
 
 function kb(n: number): string {
@@ -57,4 +57,15 @@ export class LogIndex {
   all(scenarioId: string): Log[] {
     return this.byScenario.get(scenarioId) ?? [];
   }
+}
+
+/** "passed after 3 attempts" / "failed after 4 attempts" / "repeated 100×" / "stopped at repetition 7 of 100". */
+export function attemptsNote(step: { status: string; mode?: 'repeat' | 'retry'; attempts?: number }, of?: number): string {
+  if (!step.mode || step.attempts === undefined) return '';
+  if (step.mode === 'retry') {
+    if (step.attempts <= 1) return '';
+    return `${step.status === 'passed' ? 'passed' : 'failed'} after ${step.attempts} attempts`;
+  }
+  if (step.status === 'passed') return `repeated ${step.attempts}×`;
+  return `stopped at repetition ${step.attempts}${of ? ` of ${of}` : ''}`;
 }

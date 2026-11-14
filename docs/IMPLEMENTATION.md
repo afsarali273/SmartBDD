@@ -226,6 +226,30 @@ and throws if that scenario has not finished (hint: add `@dependsOn`) or is not 
 join the group `default`. From `defaultMode` alone it is *implicit*: it constrains scheduling (e.g. serial) but has no
 hooks, store or group events (`Executor.realGroups`). A configured `groups.default` is a normal group.
 
+## 2c-bis. Step-level repeat / retry
+
+**Syntax** (`core/src/step-tags.ts`): recognised tags at the END of a step's text are stripped before matching and
+stored in `StepInstance.run`: `@repeat:N`, `@retry:N`, `@delay:<dur>`, `@backoff:<x>`, `@timeout:<dur>`,
+`@concurrency:N` (durations: `500ms`, `2s`, `1m`, plain number = ms). Only these keys are taken; other trailing `@words`
+(emails, `@team`) stay in the text. Scenario-level defaults: `@stepRetry:N`, `@stepDelay`, `@stepTimeout` (merged in the
+parser; an explicit `@repeat` drops a scenario retry). Invalid values/combinations → parse errors on the step line.
+
+**Precedence** for retry: step tag / scenario tag > step definition option `retry` (`3` or
+`{attempts, delay, backoff}`); timeout: `@timeout` > definition `timeoutMs` > default.
+
+**Execution** (`Executor.runStep`): match once → BeforeStep hooks (non-`eachAttempt`) once → attempt loop → AfterStep
+once. Each attempt runs `eachAttempt` step hooks around the body, uses its own context view (`attemptContext`:
+`ctx.step.attempt/of/mode`, logger tagging `attempt`) and emits `stepAttemptFinished`. `{{i}}`/`{{iteration}}` and
+`{{n}}`/`{{total}}` are substituted per attempt in step text (re-matched when it changes), data tables and doc strings.
+- `@retry`: re-run only `failed` (incl. timeouts) until pass or attempts exhausted; delay × backoff between attempts.
+  Pass after retries = passed (`attempts` > 1 recorded); final failure = last error.
+- `@repeat`: N runs, stop starting new ones at the first non-passed; `@concurrency` = in-flight limit (`runRepeat`).
+  Step definitions with `{ concurrent: false }` (browser/Selenium-driving steps) reject `@concurrency` with an error.
+- `ctx.pending()` / `ctx.skip()` / undefined / ambiguous are never retried. State is shared across attempts.
+- `stepFinished` gains `mode`, `attempts`; console prints "(passed after 3 attempts)" / "(repeated 100×)" and
+  "(1 step retried)" on the scenario line; HTML lists every attempt (status, text, duration, error) and tags logs `#n`;
+  JUnit failure messages add the attempt info.
+
 ## 2d. Configuration sources and precedence
 
 Lowest → highest: built-in defaults → `bddx.config.*` → `--profile <p>` (merged; tags ANDed, params/groups merged by

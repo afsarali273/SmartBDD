@@ -130,6 +130,18 @@ Logs (and their images) appear in every report: the HTML report (`html` reporter
 steps, logs, screenshots, attachments), JUnit `<system-out>`/`<system-err>`, Cucumber JSON step `output`/`embeddings`,
 and NDJSON (everything).
 
+Step-level repeat and retry (tags at the end of a step):
+
+```gherkin
+Given I create user "user-{{i}}" with email "user{{i}}@example.com" @repeat:100 @concurrency:10
+Then the export job is done @retry:5 @delay:1s @backoff:2
+And the page shows "Saved" @timeout:10s
+```
+
+`@repeat` runs a step N times (`{{i}}`/`{{n}}` = iteration/total); `@retry` re-runs it until it passes. `@concurrency` is
+for API/data steps only; browser steps declare `{ concurrent: false }`. BeforeStep/AfterStep run once per step, or per
+attempt with `{ eachAttempt: true }`.
+
 `bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
 
 ```ts

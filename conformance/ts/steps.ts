@@ -18,6 +18,14 @@ export function registerConformanceSteps(r: SupportRegistry, trace: string[]): v
   r.defineStep('the doc string says {string}', (_ctx: StepContext, text: string, doc: string) => {
     if (String(doc) !== text) throw new Error(`doc string was "${String(doc)}"`);
   });
+  r.defineStep('a step that passes on attempt {int}', (ctx: StepContext, n: number) => {
+    trace.push(`attempt ${ctx.step!.attempt}`);
+    if (ctx.step!.attempt < n) throw new Error(`attempt ${ctx.step!.attempt} < ${n}`);
+  });
+  r.defineStep('a step that fails on repetition {int}', (ctx: StepContext, n: number) => {
+    trace.push(`repetition ${ctx.step!.attempt}`);
+    if (ctx.step!.attempt === n) throw new Error(`repetition ${n} fails`);
+  });
   r.defineStep('a step that sleeps {int} ms', (_ctx: StepContext, ms: number) => new Promise((res) => setTimeout(res, ms)));
 
   r.defineHook('feature', 'before', { tags: '@trace-hooks' }, () => void trace.push('beforeFeature'));

@@ -1,0 +1,13 @@
+{
+  "scenarios": {
+    "step-repeat-retry.feature::repeat-with-iteration-placeholders": "passed",
+    "step-repeat-retry.feature::retry-until-it-passes": "passed",
+    "step-repeat-retry.feature::retry-gives-up": "failed",
+    "step-repeat-retry.feature::repeat-stops-at-the-first-failure": "failed"
+  },
+  "steps": {
+    "step-repeat-retry.feature::retry-gives-up": ["failed", "skipped"]
+  },
+  "trace": ["item 1 of 3", "item 2 of 3", "item 3 of 3", "attempt 1", "attempt 2", "attempt 3", "attempt 1", "attempt 2", "attempt 3", "repetition 1", "repetition 2"],
+  "success": false
+}

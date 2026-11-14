@@ -134,3 +134,13 @@ default info, HTML embeds debug and filters in the page). Framework diagnostics 
 JSON) to keep them clean; HTML keeps them behind a toggle. Console default changed from warn to info so user logs are
 visible without flags. HTML report v1 is server-rendered, dependency-free, one file (shareable as a CI artifact);
 v2 (graph/timeline/history) stays in Phase 5.
+
+## ADR-019 Step-level repeat/retry via inline trailing tags (2026-11-15)
+
+Owner's request: repeat a step N times (bulk data, e.g. 100 users) and retry a step until it passes. Gherkin has no step
+tags, so recognised `@key:value` tokens at the END of a step's text are parsed (only known keys, so emails and other
+`@words` are safe). BeforeStep/AfterStep run once per step by default; `{ eachAttempt: true }` runs them per attempt.
+A pass after retries is a pass (attempts recorded, not a failure). `{{i}}`/`{{n}}` give each repetition unique data.
+`@concurrency` is opt-in and only for steps safe to run in parallel with themselves (API/data); browser- or
+Selenium-driving steps must declare `{ concurrent: false }`, which turns `@concurrency` into an error. Calling scenarios
+was discussed and parked by the owner (bddx is an automation framework with BDD-style specs, not BDD-purist).

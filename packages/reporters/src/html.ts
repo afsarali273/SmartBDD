@@ -12,9 +12,10 @@ import type {
   ScenarioFinished,
   ScenarioStarted,
   Status,
+  StepAttemptFinished,
   StepFinished,
 } from '@bddx/core';
-import { LogIndex, type ReportLogLevel } from './logs.js';
+import { attemptsNote, LogIndex, type ReportLogLevel } from './logs.js';
 import type { Reporter, ReporterOptions } from './types.js';
 
 /**
@@ -37,6 +38,7 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
     started: new Map(),
     results: new Map(),
     steps: new Map(),
+    attempts: new Map(),
     attachments: [],
     hookFailures: [],
     logs,
@@ -62,6 +64,11 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
         case 'stepFinished':
           data.steps.set(`${e.scenarioId}|${e.stepId}`, e);
           break;
+        case 'stepAttemptFinished': {
+          const k = `${e.scenarioId}|${e.stepId}`;
+          data.attempts.set(k, [...(data.attempts.get(k) ?? []), e]);
+          break;
+        }
         case 'scenarioFinished':
           data.results.set(e.scenarioId, e);
           break;
@@ -103,6 +110,7 @@ interface ReportData {
   started: Map<string, ScenarioStarted>;
   results: Map<string, ScenarioFinished>;
   steps: Map<string, StepFinished>;
+  attempts: Map<string, StepAttemptFinished[]>;
   attachments: Attachment[];
   hookFailures: HookFinished[];
   logs: LogIndex;
@@ -140,7 +148,9 @@ function renderLogs(list: Log[]): string {
         : a.mediaType.startsWith('image/')
           ? `<a class="logimg" href="data:${esc(a.mediaType)};base64,${a.body}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(a.name ?? l.message)}" src="data:${esc(a.mediaType)};base64,${a.body}"></a>`
           : `<a class="logfile" download="${esc(a.name ?? 'attachment')}" href="data:${esc(a.mediaType)};base64,${a.body}">📎 ${esc(a.name ?? a.mediaType)}</a>`;
-      return `<div class="log lv-${level}${l.source === 'bddx' ? ' src-bddx' : ''}"><span class="lvl">${l.source === 'bddx' ? 'bddx:' : ''}${level}</span><span class="msg">${esc(l.message)}</span>${d}${att}</div>`;
+      return `<div class="log lv-${level}${l.source === 'bddx' ? ' src-bddx' : ''}"><span class="lvl">${l.source === 'bddx' ? 'bddx:' : ''}${level}</span>${
+        l.attempt ? `<span class="nth">#${l.attempt}</span>` : ''
+      }<span class="msg">${esc(l.message)}</span>${d}${att}</div>`;
     })
     .join('')}</div>`;
 }
@@ -211,11 +221,23 @@ export function renderHtml(d: ReportData): string {
               const sf = d.steps.get(`${sc.id}|${st.id}`);
               const sst: Status = sf?.status ?? 'skipped';
               const snippet = sf?.snippet ? `<pre class="snippet">${esc(sf.snippet)}</pre>` : '';
+              const tries = d.attempts.get(`${sc.id}|${st.id}`) ?? [];
+              const note = sf ? attemptsNote(sf, tries[0]?.of) : '';
+              const triesHtml = tries.length
+                ? `<details class="tries"><summary>${esc(note || `${tries.length} attempt(s)`)}</summary><ol>${tries
+                    .map(
+                      (t) =>
+                        `<li class="st-${t.status}"><span class="ico">${ICON[t.status]}</span> #${t.attempt} <span class="txt">${esc(t.text)}</span> <span class="dur">${ms(
+                          t.durationMs,
+                        )}</span>${t.error ? `<div class="terr">${esc(t.error.message)}</div>` : ''}</li>`,
+                    )
+                    .join('')}</ol></details>`
+                : '';
               return `<li class="step st-${sst}"><div class="line"><span class="ico">${ICON[sst]}</span><span class="kw">${esc(
                 st.keyword.trim(),
               )}</span> <span class="txt">${esc(st.text)}</span><span class="dur">${ms(sf?.durationMs)}</span></div>${renderError(
                 sst === 'failed' || sst === 'ambiguous' ? sf?.error : undefined,
-              )}${snippet}${renderLogs(d.logs.forStep(sc.id, st.id))}${renderAttachments(attBy.get(`${sc.id}|${st.id}`) ?? [])}</li>`;
+              )}${snippet}${triesHtml}${renderLogs(d.logs.forStep(sc.id, st.id))}${renderAttachments(attBy.get(`${sc.id}|${st.id}`) ?? [])}</li>`;
             })
             .join('');
           const text = esc(`${sc.name} ${sc.id} ${sc.uri} ${sc.tags.join(' ')} ${(sc.groups ?? []).join(' ')}`.toLowerCase());
@@ -292,6 +314,8 @@ pre.err{border-color:var(--failed);color:var(--failed)}pre.snippet{border-style:
 .lv-debug .lvl{color:var(--debug)}.lv-info .lvl{color:var(--info)}.lv-warn .lvl{color:var(--warn)}.lv-error .lvl{color:var(--error)}
 .log .msg{white-space:pre-wrap}.log .data{color:var(--muted);white-space:pre-wrap;flex-basis:100%;margin-left:5.8em}
 .logimg{flex-basis:100%;margin-left:5.8em}.logimg img{max-width:min(100%,640px);max-height:420px;border:1px solid var(--line);border-radius:4px;margin:3px 0}.logfile{margin-left:4px}
+.tries{margin:2px 0 2px 22px;font-size:12px}.tries summary{cursor:pointer;color:var(--muted)}.tries ol{margin:2px 0;padding-left:18px;max-height:240px;overflow:auto}
+.tries li{list-style:none}.tries .ico{display:inline-block}.terr{color:var(--failed);margin-left:1.6em;white-space:pre-wrap}.nth{color:var(--muted);font-size:11px}
 .atts{margin:2px 0 2px 22px}figure{margin:6px 0}figcaption{font-size:12px;color:var(--muted)}figure img{max-width:min(100%,900px);border:1px solid var(--line);border-radius:4px}
 .att summary{cursor:pointer;font-size:12px}
 body.min-info .lv-debug,body.min-warn .lv-debug,body.min-warn .lv-info,body.min-error .lv-debug,body.min-error .lv-info,body.min-error .lv-warn{display:none}

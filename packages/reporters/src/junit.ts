@@ -70,7 +70,8 @@ export function render(
         sFail++;
         const step = failingStep.get(s.id);
         const err: ErrorInfo | undefined = r?.error ?? step?.error;
-        const message = err?.message ?? (status === 'undefined' ? `Undefined step` : status);
+        const note = step?.mode && step.attempts ? ` [${step.mode === 'retry' ? `after ${step.attempts} attempts` : `repetition ${step.attempts}`}]` : '';
+        const message = (err?.message ?? (status === 'undefined' ? `Undefined step` : status)) + note;
         const detail = [step ? `Step: ${step.stepId}` : '', err?.stack ?? '', step?.snippet ?? ''].filter(Boolean).join('\n');
         body = `\n      <failure type="${status}" message="${esc(firstLine(message))}">${esc(detail || message)}</failure>\n    `;
       } else if (status === 'skipped' || status === 'pending') {

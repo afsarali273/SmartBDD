@@ -7,8 +7,9 @@ The single source of truth for "where are we". Update it at the end of every wor
 - **Phases 0–1:** done. **Phase 2:** data core done; text composite steps, call-a-scenario, Phase 2 gate remain.
 - **Phase 3:** planner, `bddx plan`/`--explain`, dependency closure, in-process scheduler (workers, priorities, locks,
   serial/parallel/exclusive groups, group caps), group hooks/stores, hard/soft deps, exports, orchestration example. Gate passed.
-  Also: `defaultMode`, `--set` overrides, levelled logging with images, HTML report v1, logs in JUnit/Cucumber JSON. Remaining: worker processes, `@requires`, timeline view.
-- **Health:** `npm run verify` green on the user's Mac (107 tests + both examples).
+  Also: `defaultMode`, `--set` overrides, levelled logging with images, HTML report v1, logs in JUnit/Cucumber JSON,
+  step-level `@repeat`/`@retry` (+ delay/backoff/timeout/concurrency). Remaining: worker processes, `@requires`, timeline view.
+- **Health:** `npm run verify` green on the user's Mac (121 tests + both examples).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 
@@ -20,8 +21,8 @@ The single source of truth for "where are we". Update it at the end of every wor
    result. Worker hooks (`BeforeWorker/AfterWorker`) + worker store. Feature/group scopes: decide per-worker vs
    global (likely: Before/AfterFeature per worker that runs members — document clearly; group hooks in parent?).
    Write an ADR before coding. Keep `workers` in-process mode as `--pool=threads|inline` default inline.
-2. **Phase 4: retries** (step / scenario / group / rerun-failed), flaky status, quarantine — design is in ROADMAP.
-3. Phase 2 leftovers: text composite steps, call-a-scenario, Phase 2 gate.
+2. **Phase 4: retries** (scenario / group / rerun-failed), flaky status, quarantine — design is in ROADMAP. Step retry is done.
+3. Phase 2 leftovers: text composite steps, Phase 2 gate. (Calling scenarios: parked by the owner.)
 4. `@requires:<file.feature>` preconditions.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
@@ -128,3 +129,15 @@ Worked directly in the user's folder via device shell.
   (`steps/fake-screenshot.ts`, no browser needed).
 - Verified the HTML visually (headless Chrome screenshots: images inline, level filter, framework toggle).
 - tests: +5 (107).
+
+### 2026-11-15: Session 3d (step-level repeat/retry)
+
+- Owner: framing = automation framework with BDD-style specs (practical over BDD-purist); calling scenarios parked.
+- core: `step-tags.ts` (`extractStepTags`, `scenarioStepDefaults`, `parseDuration`), `StepInstance.tags/run`, parser
+  errors for bad tags; events `stepAttemptFinished`, `stepFinished.mode/attempts`, `log.attempt`.
+- runtime: attempt loop in `runStep` (retry with delay/backoff, repeat with `{{i}}`/`{{n}}` and `runRepeat`
+  concurrency), `attemptContext`, `eachAttempt` hooks, definition `retry` and `concurrent:false` guard,
+  `ctx.step.attempt/of/mode`.
+- reporters: `attemptsNote`; console/HTML/JUnit show attempts; HTML per-attempt list.
+- example: `examples/basic/features/bulk-and-polling.feature` (100 users ×10 concurrency, polling with retry).
+- conformance: `step-repeat-retry.feature` + 2 vocabulary steps. Tests: +14 (121).

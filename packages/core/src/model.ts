@@ -9,6 +9,8 @@
  * will expand the same way.
  */
 
+import type { StepRunOptions } from './step-tags.js';
+
 export type Status = 'passed' | 'failed' | 'skipped' | 'pending' | 'undefined' | 'ambiguous';
 
 /** Gherkin keyword category. `conjunction` = And/But, resolved to the previous type by the compiler. */
@@ -59,6 +61,10 @@ export interface StepInstance {
   argument?: StepArgument;
   /** True when the step came from a Background block. */
   fromBackground: boolean;
+  /** Step-level tags written at the end of the step (`@retry:3`), already removed from `text`. */
+  tags?: Tag[];
+  /** Repeat/retry/timeout options from step tags merged with scenario defaults (@stepRetry…). */
+  run?: StepRunOptions;
 }
 
 export interface RuleRef {

@@ -37,6 +37,7 @@ import type {
 } from '../model.js';
 import { parseTag, tagsToMeta } from '../tags.js';
 import { parseDataRef, type DataLoader } from '../data/loader.js';
+import { extractStepTags, scenarioStepDefaults } from '../step-tags.js';
 import type { SpecParser } from '../ports.js';
 
 export interface ParseOptions {
@@ -161,23 +162,32 @@ function dedupeTags(tags: Tag[]): Tag[] {
   return out;
 }
 
-function pickleToInstance(pickle: Pickle, feature: FeatureInfo, index: AstIndex): ScenarioInstance {
+function pickleToInstance(pickle: Pickle, feature: FeatureInfo, index: AstIndex, errors: ParseErrorInfo[]): ScenarioInstance {
   const [scenarioNodeId, rowNodeId] = pickle.astNodeIds;
   const scInfo = scenarioNodeId ? index.scenarios.get(scenarioNodeId) : undefined;
   const row = rowNodeId ? index.rows.get(rowNodeId) : undefined;
 
   const tags = dedupeTags(pickle.tags.map((t) => parseTag(t.name, index.tagLines.get(t.astNodeId))));
 
+  const defaults = scenarioStepDefaults(tags);
+  for (const message of defaults.errors) errors.push({ uri: pickle.uri, line: pickle.location?.line ?? 0, message });
   const steps: StepInstance[] = pickle.steps.map((ps) => {
     const ast = index.steps.get(ps.astNodeIds[0] ?? '');
+    const extracted = extractStepTags(ps.text);
+    const line = ast?.line ?? 0;
+    for (const message of extracted.errors) errors.push({ uri: pickle.uri, line, message: `${message} (step "${ps.text}")` });
     const step: StepInstance = {
       id: ps.id,
       keyword: ast?.keyword ?? '* ',
       keywordType: toKeywordType(ps.type),
-      text: ps.text,
-      line: ast?.line ?? 0,
+      text: extracted.text,
+      line,
       fromBackground: ast?.fromBackground ?? false,
     };
+    if (extracted.tags.length) step.tags = extracted.tags;
+    const run = { ...defaults.run, ...extracted.run };
+    if (run.repeat !== undefined) delete run.retry; // an explicit @repeat wins over a scenario-level @stepRetry
+    if (Object.keys(run).length) step.run = run;
     if (ps.argument?.dataTable) {
       step.argument = { kind: 'dataTable', rows: ps.argument.dataTable.rows.map((r) => r.cells.map((c) => c.value)) };
     } else if (ps.argument?.docString) {
@@ -256,7 +266,7 @@ function compileDocument(doc: GherkinDocument, uri: string, newId: () => string,
   const pickles = compile(doc, uri, newId);
   const templateNames = new Map<ScenarioInstance, string>();
   const scenarios = pickles.map((p) => {
-    const inst = pickleToInstance(p, feature, index);
+    const inst = pickleToInstance(p, feature, index, errors);
     const template = index.scenarios.get(p.astNodeIds[0] ?? '')?.scenario.name;
     if (template !== undefined) templateNames.set(inst, template);
     return inst;

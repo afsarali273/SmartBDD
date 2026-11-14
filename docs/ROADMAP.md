@@ -57,6 +57,8 @@ file is self-contained.
 - [x] `--set path=value` overrides for any config option
 - [x] Levelled logging (`ctx.log.*`, global `log` via AsyncLocalStorage, `--log-level`, framework diagnostics)
 - [x] Logs with images (`ctx.log.image`, bytes as data); logs in HTML / JUnit / Cucumber JSON reports
+- [x] Step-level `@repeat` / `@retry` / `@delay` / `@backoff` / `@timeout` / `@concurrency` (owner's request; pulled
+      forward from Phase 4), `{{i}}`/`{{n}}`, `eachAttempt` step hooks, definition `retry` + `concurrent:false`
 
 Proposed config:
 
@@ -89,7 +91,8 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 
 ## Phase 4: Resilience
 
-- [ ] Retry levels: step (`@retryStep(n, delay)`), scenario (`@retry(n)`), group (`groups.x.retry`), run (`--rerun-failed`)
+- [x] Step retry (done early: `@retry:N` on steps, `@stepRetry` per scenario, definition `retry`)
+- [ ] Retry levels: scenario (`@retry` on scenarios — note: on a Scenario line, distinct from step tags), group (`groups.x.retry`), run (`--rerun-failed`)
 - [ ] Policies: attempts, fixed/exponential delay, `retryOn` (error class / message / tag), `RetryAnalyzer` interface
 - [ ] `attempt` hook level (BeforeAttempt/AfterAttempt)
 - [ ] Flaky status (pass after fail), quarantine tag

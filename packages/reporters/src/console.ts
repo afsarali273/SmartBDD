@@ -1,3 +1,4 @@
+import { attemptsNote } from './logs.js';
 import { logLevelEnabled, type BddxEvent, type Log, type LogLevel, type PlannedScenario, type Status, type StepFinished } from '@bddx/core';
 import type { Reporter, ReporterOptions } from './types.js';
 
@@ -45,7 +46,8 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
       data = ` ${dim(json && json.length > 300 ? `${json.slice(0, 300)}…` : String(json))}`;
     }
     const att = l.attachment ? dim(` [${l.attachment.mediaType.startsWith('image/') ? '🖼 image' : '📎 file'}: ${l.attachment.name ?? l.attachment.mediaType}]`) : '';
-    return `${indent}${head} ${l.message.split('\n').join(`\n${indent}  `)}${data}${att}\n`;
+    const nth = l.attempt ? dim(` #${l.attempt}`) : '';
+    return `${indent}${head}${nth} ${l.message.split('\n').join(`\n${indent}  `)}${data}${att}\n`;
   };
 
   const plan = new Map<string, PlannedScenario>();
@@ -102,7 +104,8 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             currentFeature = s.featureName;
             write(`\n${s.featureName}  ${dim(s.uri)}\n`);
           }
-          const extra = e.reason ? dim(` — ${e.reason}`) : '';
+          const retried = (steps.get(e.scenarioId) ?? []).filter((x) => x.mode === 'retry' && (x.attempts ?? 1) > 1).length;
+          const extra = (e.reason ? dim(` — ${e.reason}`) : '') + (retried ? dim(` (${retried} step${retried > 1 ? 's' : ''} retried)`) : '');
           const ex = s.example;
           const row = !ex
             ? ''
@@ -115,7 +118,8 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             for (const st of s.steps) {
               const f = finished.get(st.id);
               const status: Status = f?.status ?? 'skipped';
-              write(`      ${c(status, ICON[status])} ${st.keyword}${st.text}\n`);
+              const note = f ? attemptsNote(f) : '';
+              write(`      ${c(status, ICON[status])} ${st.keyword}${st.text}${note ? dim(` (${note})`) : ''}\n`);
               if (f?.error && status === 'failed') write(`        ${c('failed', f.error.message.split('\n').join('\n        '))}\n`);
             }
           }

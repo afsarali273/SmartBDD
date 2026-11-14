@@ -29,6 +29,7 @@ import {
   BDDX_VERSION,
   EVENT_SCHEMA_VERSION,
   buildPlan,
+  parseDuration,
   compileTagExpression,
   emptySummary,
   toErrorInfo,
@@ -53,7 +54,7 @@ import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
 import { PendingSignal, SkipSignal, withTimeout } from './signals.js';
-import type { CurrentStepInfo, FeatureContext, GroupContext, HookDefinition, RunContext, StepContext } from './types.js';
+import type { CurrentStepInfo, FeatureContext, GroupContext, HookDefinition, RunContext, StepContext, StepRetryOption } from './types.js';
 
 export interface ExecuteOptions {
   registry: SupportRegistry;
@@ -459,14 +460,25 @@ export class Executor {
   ): Promise<{ status: Status; error?: unknown; skipReason?: string }> {
     const { bus, registry } = this.opts;
     const started = Date.now();
-    const info: CurrentStepInfo = { id: step.id, keyword: step.keyword, text: step.text, line: step.line };
+    const info: CurrentStepInfo = { id: step.id, keyword: step.keyword, text: step.text, line: step.line, attempt: 1, of: 1 };
     ctx.step = info;
     const ids: Emitters = { scenarioId: scenario.id, stepId: step.id };
     this.currentIds(ctx).stepId = step.id;
     bus.emit({ type: 'stepStarted', scenarioId: scenario.id, stepId: step.id, keyword: step.keyword, text: step.text, line: step.line });
 
     const match = await registry.match(step.text, tagNames).catch((e: unknown) => ({ kind: 'error' as const, error: e }));
-    const finish = (status: Status, extra: { error?: unknown; definition?: { pattern: string; location?: string }; candidates?: string[]; snippet?: string; skipReason?: string } = {}) => {
+    const finish = (
+      status: Status,
+      extra: {
+        error?: unknown;
+        definition?: { pattern: string; location?: string };
+        candidates?: string[];
+        snippet?: string;
+        skipReason?: string;
+        attempts?: number;
+        mode?: 'repeat' | 'retry';
+      } = {},
+    ) => {
       this.summary.steps[status] += 1;
       this.summary.steps.total += 1;
       bus.emit({
@@ -479,6 +491,7 @@ export class Executor {
         ...(extra.definition ? { definition: extra.definition } : {}),
         ...(extra.candidates ? { candidates: extra.candidates } : {}),
         ...(extra.snippet ? { snippet: extra.snippet } : {}),
+        ...(extra.mode ? { mode: extra.mode, attempts: extra.attempts! } : {}),
       });
       return { status, ...(extra.error !== undefined ? { error: extra.error } : {}), ...(extra.skipReason ? { skipReason: extra.skipReason } : {}) };
     };
@@ -497,34 +510,151 @@ export class Executor {
     const definition = { pattern: String(match.definition.pattern), ...(match.definition.location ? { location: match.definition.location } : {}) };
     if (blocked) return finish('skipped', { definition });
 
-    // before-step hooks
-    const before = await this.runHooks('step', 'before', ctx, tagFilter(tagNames), ids);
+    // ---- repeat / retry policy: step tags (incl. scenario @stepRetry…) > step definition `retry` option
+    const run = step.run ?? {};
+    const defRetry = normaliseRetry(match.definition.retry);
+    const repeat = run.repeat ?? 1;
+    const retries = run.repeat !== undefined ? 0 : (run.retry ?? defRetry.attempts ?? 0);
+    const mode: 'repeat' | 'retry' | undefined = run.repeat !== undefined ? 'repeat' : retries > 0 ? 'retry' : undefined;
+    const baseDelay = run.delayMs ?? defRetry.delayMs ?? 0;
+    const backoff = run.backoff ?? defRetry.backoff ?? 1;
+    const timeout = run.timeoutMs ?? match.definition.timeoutMs ?? registry.defaultTimeoutMs;
+    const total = mode === 'repeat' ? repeat : retries + 1;
+
+    // before-step hooks: once per step (eachAttempt hooks run around every attempt instead)
+    const outer = (h: HookDefinition) => !h.eachAttempt && tagFilter(tagNames)(h);
+    const inner = (h: HookDefinition) => !!h.eachAttempt && tagFilter(tagNames)(h);
+    const before = await this.runHooks('step', 'before', ctx, outer, ids);
     let status: Status = 'passed';
     let error: unknown;
     let skipReason: string | undefined;
+    let attemptsRun = 0;
+
+    const attemptOnce = async (n: number): Promise<{ status: Status; error?: unknown; skipReason?: string }> => {
+      const text = substituteIteration(step.text, n, total);
+      const actx = this.attemptContext(ctx, scenario.id, step, text, n, total, mode);
+      const aids: Emitters = { ...ids };
+      const t0 = Date.now();
+      let st: Status = 'passed';
+      let err: unknown;
+      let reason: string | undefined;
+      const hb = await this.runHooks('step', 'before', actx, inner, aids);
+      if (hb.status !== 'passed') {
+        st = hb.status;
+        err = hb.error;
+        reason = hb.skipReason;
+      } else {
+        try {
+          // Text with {{i}} changes per iteration: match again (same definition expected).
+          const m = text === step.text ? match : await registry.match(text, tagNames);
+          if (m.kind !== 'match') throw new Error(`Step text "${text}" (iteration ${n}) no longer matches exactly one definition (${m.kind})`);
+          const args: unknown[] = [...m.values];
+          if (step.argument?.kind === 'dataTable') {
+            args.push(new DataTable(step.argument.rows.map((r) => r.map((c) => substituteIteration(c, n, total)))));
+          }
+          if (step.argument?.kind === 'docString') {
+            args.push(new DocString(substituteIteration(step.argument.content, n, total), step.argument.mediaType));
+          }
+          const ret = await withTimeout(`Step "${text}"${mode ? ` (${mode} ${n}/${total})` : ''}`, timeout, () =>
+            withLogger(actx.log, () => m.definition.fn(actx, ...args)),
+          );
+          if (ret === 'pending') st = 'pending';
+        } catch (e) {
+          ({ status: st, skipReason: reason } = classify(e));
+          err = e;
+        }
+      }
+      const ha = await this.runHooks('step', 'after', actx, inner, aids);
+      if (ha.status === 'failed' && st === 'passed') {
+        st = 'failed';
+        err = ha.error;
+      }
+      attemptsRun++;
+      if (mode) {
+        bus.emit({
+          type: 'stepAttemptFinished',
+          scenarioId: scenario.id,
+          stepId: step.id,
+          attempt: n,
+          of: total,
+          mode,
+          text,
+          status: st,
+          durationMs: Date.now() - t0,
+          ...(err !== undefined && st === 'failed' ? { error: toErrorInfo(err) } : {}),
+        });
+      }
+      return { status: st, ...(err !== undefined ? { error: err } : {}), ...(reason ? { skipReason: reason } : {}) };
+    };
+
     if (before.status !== 'passed') {
       status = before.status;
       error = before.error;
       skipReason = before.skipReason;
+    } else if (mode === 'repeat' && (run.concurrency ?? 1) > 1 && match.definition.concurrent === false) {
+      status = 'failed';
+      error = new Error(
+        `@concurrency:${run.concurrency} is not allowed on "${String(match.definition.pattern)}": its definition is marked ` +
+          `{ concurrent: false } (e.g. it drives a browser). Remove @concurrency to repeat it sequentially.`,
+      );
+    } else if (mode === 'repeat') {
+      const r = await runRepeat(repeat, run.concurrency ?? 1, baseDelay, attemptOnce);
+      status = r.status;
+      error = r.error;
+      skipReason = r.skipReason;
     } else {
-      const args: unknown[] = [...match.values];
-      if (step.argument?.kind === 'dataTable') args.push(new DataTable(step.argument.rows));
-      if (step.argument?.kind === 'docString') args.push(new DocString(step.argument.content, step.argument.mediaType));
-      const timeout = match.definition.timeoutMs ?? registry.defaultTimeoutMs;
-      try {
-        const ret = await withTimeout(`Step "${step.text}"`, timeout, () => withLogger(ctx.log, () => match.definition.fn(ctx, ...args)));
-        if (ret === 'pending') status = 'pending';
-      } catch (e) {
-        ({ status, skipReason } = classify(e));
-        error = e;
+      // single run or retry-until-pass
+      let delay = baseDelay;
+      for (let n = 1; n <= total; n++) {
+        const r = await attemptOnce(n);
+        status = r.status;
+        error = r.error;
+        skipReason = r.skipReason;
+        if (status !== 'failed' || n === total) break; // only failures are retried
+        if (delay > 0) await sleep(delay);
+        delay = Math.round(delay * backoff);
       }
     }
-    const after = await this.runHooks('step', 'after', ctx, tagFilter(tagNames), ids);
+    const after = await this.runHooks('step', 'after', ctx, outer, ids);
     if (after.status === 'failed' && status === 'passed') {
       status = 'failed';
       error = after.error;
     }
-    return finish(status, { definition, ...(error !== undefined && status !== 'skipped' ? { error } : {}), ...(skipReason ? { skipReason } : {}) });
+    return finish(status, {
+      definition,
+      ...(error !== undefined && status !== 'skipped' ? { error } : {}),
+      ...(skipReason ? { skipReason } : {}),
+      ...(mode ? { attempts: attemptsRun, mode } : {}),
+    });
+  }
+
+  /** A per-attempt view of the step context: own `step` info and a logger tagged with the attempt. */
+  private attemptContext(
+    ctx: StepContext,
+    scenarioId: string,
+    step: StepInstance,
+    text: string,
+    attempt: number,
+    of: number,
+    mode: 'repeat' | 'retry' | undefined,
+  ): StepContext {
+    const bus = this.opts.bus;
+    const actx = Object.create(ctx) as StepContext;
+    actx.step = { id: step.id, keyword: step.keyword, text, line: step.line, attempt, of, ...(mode ? { mode } : {}) };
+    actx.log = createLogger((level, message, data, attachment) =>
+      bus.emit({
+        type: 'log',
+        level,
+        source: 'user',
+        message,
+        scenarioId,
+        stepId: step.id,
+        ...(mode ? { attempt } : {}),
+        ...(data !== undefined ? { data } : {}),
+        ...(attachment ? { attachment } : {}),
+      }),
+    );
+    return actx;
   }
 
   private skipScenario(scenario: ScenarioInstance, reason: string, workerId: string): Status {
@@ -764,6 +894,49 @@ function tagFilter(tagNames: readonly string[]) {
 
 function ruleTags(rule: RuleRef): string[] {
   return rule.tags.map((t) => t.name);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** `{{i}}` / `{{iteration}}` = 1-based repetition or attempt number; `{{n}}` / `{{total}}` = how many. */
+export function substituteIteration(text: string, i: number, n: number): string {
+  return text.replace(/\{\{\s*(i|iteration|n|total)\s*\}\}/g, (_, k: string) => String(k === 'i' || k === 'iteration' ? i : n));
+}
+
+function normaliseRetry(r: StepRetryOption | undefined): { attempts?: number; delayMs?: number; backoff?: number } {
+  if (r === undefined) return {};
+  if (typeof r === 'number') return { attempts: r };
+  const delayMs = typeof r.delay === 'string' ? parseDuration(r.delay) : r.delay;
+  return { attempts: r.attempts, ...(delayMs !== undefined ? { delayMs } : {}), ...(r.backoff !== undefined ? { backoff: r.backoff } : {}) };
+}
+
+/**
+ * Run `attempt(1..n)` with up to `concurrency` in flight, `delayMs` between starts.
+ * Stops starting new repetitions after the first non-passed result; returns the first such result.
+ */
+async function runRepeat(
+  n: number,
+  concurrency: number,
+  delayMs: number,
+  attempt: (i: number) => Promise<{ status: Status; error?: unknown; skipReason?: string }>,
+): Promise<{ status: Status; error?: unknown; skipReason?: string }> {
+  let next = 1;
+  let first: { status: Status; error?: unknown; skipReason?: string } | undefined;
+  const inflight = new Set<Promise<void>>();
+  while (next <= n && !first) {
+    while (inflight.size < concurrency && next <= n && !first) {
+      const i = next++;
+      const p: Promise<void> = attempt(i).then((r) => {
+        if (r.status !== 'passed' && !first) first = r;
+        inflight.delete(p);
+      });
+      inflight.add(p);
+      if (delayMs > 0 && next <= n) await sleep(delayMs);
+    }
+    if (inflight.size) await Promise.race(inflight);
+  }
+  await Promise.all(inflight);
+  return first ?? { status: 'passed' };
 }
 
 function inc(m: Map<string, number>, k: string) {

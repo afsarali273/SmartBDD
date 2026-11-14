@@ -159,6 +159,24 @@ export interface StepFinished extends Base {
   candidates?: string[];
   /** Ready-to-paste code, when status is 'undefined'. */
   snippet?: string;
+  /** For @repeat / @retry steps: how it ran and how many times. */
+  mode?: 'repeat' | 'retry';
+  attempts?: number;
+}
+
+/** One repetition (@repeat) or attempt (@retry) of a step. Emitted only for such steps. */
+export interface StepAttemptFinished extends Base {
+  type: 'stepAttemptFinished';
+  scenarioId: string;
+  stepId: string;
+  attempt: number;
+  of: number;
+  mode: 'repeat' | 'retry';
+  /** Text of this attempt ({{i}} substituted). */
+  text: string;
+  status: Status;
+  durationMs: number;
+  error?: ErrorInfo;
 }
 
 export interface Attachment extends Base {
@@ -193,6 +211,8 @@ export interface Log extends Base {
   source?: 'user' | 'bddx';
   /** Structured payload (JSON-serialisable), shown by reporters on request. */
   data?: unknown;
+  /** Attempt number when logged inside a @repeat / @retry step. */
+  attempt?: number;
   /** An image or file logged together with the message (e.g. a screenshot). */
   attachment?: { mediaType: string; encoding: 'base64'; body: string; name?: string; bytes: number };
 }
@@ -234,6 +254,7 @@ export type BddxEvent =
   | ScenarioStarted
   | StepStarted
   | StepFinished
+  | StepAttemptFinished
   | Attachment
   | Log
   | ScenarioFinished

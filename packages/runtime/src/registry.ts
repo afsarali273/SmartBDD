@@ -11,6 +11,7 @@ import type {
   ScenarioHookFn,
   StepFn,
   StepOptions,
+  StepRetryOption,
 } from './types.js';
 
 export interface StepDefinition {
@@ -19,6 +20,8 @@ export interface StepDefinition {
   fn: StepFn;
   tags?: string;
   timeoutMs?: number;
+  retry?: StepRetryOption;
+  concurrent?: boolean;
   location?: string;
   seq: number;
 }
@@ -62,6 +65,8 @@ export class SupportRegistry {
     const def: StepDefinition = { id: this.nextStepId(), pattern, fn, seq: this.seq++ };
     if (options.tags) def.tags = options.tags;
     if (options.timeoutMs !== undefined) def.timeoutMs = options.timeoutMs;
+    if (options.retry !== undefined) def.retry = options.retry;
+    if (options.concurrent !== undefined) def.concurrent = options.concurrent;
     if (location) def.location = location;
     this.steps.push(def);
     this.compiled = undefined;
@@ -91,6 +96,10 @@ export class SupportRegistry {
       hook.tags = options.tags;
     }
     if (options.timeoutMs !== undefined) hook.timeoutMs = options.timeoutMs;
+    if (options.eachAttempt) {
+      if (level !== 'step') throw new Error(`eachAttempt only applies to BeforeStep/AfterStep hooks (got ${kind} ${level})`);
+      hook.eachAttempt = true;
+    }
     if (location) hook.location = location;
     this.hooks.push(hook);
     return hook;
