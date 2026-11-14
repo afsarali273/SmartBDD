@@ -84,12 +84,15 @@ export interface PlanReady extends Base {
 export interface GroupStarted extends Base {
   type: 'groupStarted';
   group: string;
+  /** Group attempt (> 1 when a retry group re-runs). */
+  attempt?: number;
 }
 
 export interface GroupFinished extends Base {
   type: 'groupFinished';
   group: string;
   status: Status;
+  attempt?: number;
 }
 
 export interface FeatureStarted extends Base {
@@ -226,12 +229,34 @@ export interface ScenarioFinished extends Base {
   error?: ErrorInfo;
   /** Why it was skipped, e.g. 'beforeFeature hook "seed db" failed'. */
   reason?: string;
+  /** This attempt failed and the scenario will run again (scenario retry). Not counted in the summary. */
+  willRetry?: boolean;
+  /** Final attempt passed after an earlier attempt failed (scenario retry, group retry or a rerun). */
+  flaky?: boolean;
+  /** Tagged @quarantine: runs and reports, but cannot fail the run. */
+  quarantined?: boolean;
+}
+
+/** A retry group is about to run (some of) its members again. */
+export interface GroupRetrying extends Base {
+  type: 'groupRetrying';
+  group: string;
+  /** The group attempt about to start (2 = first retry). */
+  attempt: number;
+  scenarioIds: string[];
 }
 
 export interface RunSummary {
+  /** Final attempts only. */
   scenarios: Record<Status, number> & { total: number };
   steps: Record<Status, number> & { total: number };
   durationMs: number;
+  /** Scenarios that passed only after a retry. */
+  flaky?: number;
+  /** Scenarios tagged @quarantine (any status). */
+  quarantined?: number;
+  /** Scenarios that needed more than one attempt (passed or not). */
+  retried?: number;
 }
 
 export interface RunFinished extends Base {
@@ -247,6 +272,7 @@ export type BddxEvent =
   | PlanReady
   | GroupStarted
   | GroupFinished
+  | GroupRetrying
   | FeatureStarted
   | FeatureFinished
   | HookStarted
@@ -319,5 +345,5 @@ export class EventBus {
 
 export function emptySummary(): RunSummary {
   const counts = () => ({ passed: 0, failed: 0, skipped: 0, pending: 0, undefined: 0, ambiguous: 0, total: 0 });
-  return { scenarios: counts(), steps: counts(), durationMs: 0 };
+  return { scenarios: counts(), steps: counts(), durationMs: 0, flaky: 0, quarantined: 0, retried: 0 };
 }

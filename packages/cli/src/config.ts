@@ -52,6 +52,14 @@ export interface BddxOptions {
   groups?: Record<string, GroupConfig>;
   /** How ungrouped scenarios run: 'parallel' | 'serial' | 'exclusive'. Shorthand for groups.default.mode. */
   defaultMode?: GroupMode;
+  /**
+   * Scenario retry: `{ scenario: 2, delay: '1s', on: ['TimeoutError', '/ECONN/'], failOnFlaky: false }`.
+   * `on` entries match the error name exactly or the message as a substring; "/regex/" strings are regular expressions.
+   * Per scenario: @retry:N / @noRetry. Per group: groups.x.scenarioRetry, groups.x.retry (whole group).
+   */
+  retry?: { scenario?: number; delay?: string | number; on?: string[]; failOnFlaky?: boolean };
+  /** Time budget per scenario attempt, e.g. '2m'. Per scenario: @timeout:<duration>. */
+  scenarioTimeout?: string | number;
   /** Console log level: 'debug' | 'info' (default) | 'warn' | 'error' | 'silent'. Events always contain every log; file reports have their own `logLevel` option. */
   logLevel?: LogLevel | 'silent';
 }
@@ -59,7 +67,7 @@ export interface BddxOptions {
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout',
 ] as const;
 
 /**
@@ -158,6 +166,7 @@ export function mergeOptions(a: BddxOptions, b: BddxOptions): BddxOptions {
   if (a.params || b.params) out.params = { ...a.params, ...b.params };
   if (a.tags && b.tags) out.tags = `(${a.tags}) and (${b.tags})`;
   if (a.groups || b.groups) out.groups = { ...a.groups, ...b.groups };
+  if (a.retry || b.retry) out.retry = { ...a.retry, ...b.retry };
   return out;
 }
 

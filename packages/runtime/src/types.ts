@@ -55,6 +55,27 @@ export interface GroupContext extends RunContext {
   groupName: string;
 }
 
+export interface SoftAssert {
+  /** Record a failure when `condition` is falsy. */
+  check(condition: unknown, message: string): void;
+  /** Run an assertion; a thrown error is recorded instead of failing immediately. */
+  run(fn: () => unknown): void | Promise<void>;
+  /** Failures recorded so far in this step. */
+  readonly failures: readonly Error[];
+}
+
+/** Input to a custom retry decision (TestNG IRetryAnalyzer style). */
+export interface RetryContext {
+  scenario: ScenarioInfo;
+  /** The attempt that just failed (1-based). */
+  attempt: number;
+  maxRetries: number;
+  error?: { name?: string; message: string };
+}
+
+/** Return false to stop retrying. Called only when a retry is otherwise allowed. */
+export type RetryAnalyzer = (failure: RetryContext) => boolean | Promise<boolean>;
+
 /** Read-only view of another scenario's exports. */
 export interface ExportsView {
   get<T = unknown>(key: string): T;
@@ -83,6 +104,13 @@ export interface StepContext extends FeatureContext {
   from(scenarioId: string): ExportsView;
   /** The current step (only inside steps and step hooks). */
   step?: CurrentStepInfo;
+  /**
+   * Soft assertions: failures are collected and the step fails at its end with all of them.
+   *   ctx.soft.check(total === 10, 'total is 10');
+   *   ctx.soft.run(() => assert.equal(a, b));          // any assertion library
+   *   await ctx.soft.run(async () => expect(...));
+   */
+  soft: SoftAssert;
   /** Mark the current step pending. */
   pending(reason?: string): never;
   /** Skip the rest of the scenario. */

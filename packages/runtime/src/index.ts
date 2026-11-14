@@ -13,7 +13,7 @@ export {
 } from './registry.js';
 export * from './ports.js';
 export { createCucumberExpressionEngine } from './adapters/cucumber-expressions.js';
-export { Executor, execute, type ExecuteOptions, type ExecuteResult } from './executor.js';
+export { Executor, execute, type ExecuteOptions, type ExecuteResult, type RetryOptions } from './executor.js';
 export { Steps, resolve, CONTEXT, type Constructor, type InjectToken, type MethodDecorator } from './decorators.js';
 export { schedule, type SchedulerCallbacks, type ScheduleOptions } from './scheduler.js';
 export { log, createLogger, withLogger, sniffMediaType, type Logger, type LogFn, type LogImageOptions } from './logger.js';

@@ -12,6 +12,7 @@ import type {
   StepFn,
   StepOptions,
   StepRetryOption,
+  RetryAnalyzer,
 } from './types.js';
 
 export interface StepDefinition {
@@ -55,6 +56,8 @@ export class SupportRegistry {
   private nextStepId = createIdGenerator('step-def-');
   private nextHookId = createIdGenerator('hook-');
   defaultTimeoutMs = 30_000;
+  /** Custom scenario-retry decision (see setRetryAnalyzer). */
+  retryAnalyzer: RetryAnalyzer | undefined;
 
   constructor(options: { engine?: StepExpressionEngine } = {}) {
     this.engine = options.engine ?? createCucumberExpressionEngine();

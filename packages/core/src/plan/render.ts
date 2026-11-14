@@ -7,7 +7,8 @@ export function renderPlanText(plan: Plan): string {
     out.push(
       `  group ${g.name}${g.implicit ? ' (ungrouped scenarios)' : ''}: ${g.mode}${g.workers ? ` x${g.workers}` : ''}, ${g.members.length} member(s)` +
         `${g.dependsOn.length ? `, after ${g.dependsOn.join(', ')}${g.onDependencyFailure === 'run' ? ' (soft)' : ''}` : ''}` +
-        `${g.locks.length ? `, locks ${g.locks.join(', ')}` : ''}${g.priority ? `, priority ${g.priority}` : ''}`,
+        `${g.locks.length ? `, locks ${g.locks.join(', ')}` : ''}${g.priority ? `, priority ${g.priority}` : ''}` +
+        `${g.retry ? `, retry ${g.retry} (${g.retryMembers})` : ''}`,
     );
   }
   out.push('');
@@ -18,6 +19,8 @@ export function renderPlanText(plan: Plan): string {
       n.exclusive ? 'exclusive' : '',
       n.locks.length ? `locks:${n.locks.join(',')}` : '',
       n.pulledInBy ? '(dependency)' : '',
+      n.retry ? `retry:${n.retry}` : '',
+      n.quarantined ? 'quarantined' : '',
     ].filter(Boolean);
     out.push(`  ${n.id}${flags.length ? `  ${flags.join(' ')}` : ''}`);
     for (const d of n.deps) out.push(`      <- ${d.target}${d.soft ? ' (soft)' : ''}`);

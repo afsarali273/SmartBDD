@@ -4,7 +4,7 @@ A BDD automation framework that keeps Gherkin's readability and adds TestNG-styl
 groups, dependencies, mixed parallel/serial execution and layered retries.
 TypeScript first, Java next. ("bddx" is a working name.)
 
-> **Status:** Phases 0–1 complete; Phase 2 data core and Phase 3 orchestration (in-process) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 0–1 and 4 complete; Phase 2 data core and Phase 3 orchestration (in-process) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Quick start
 
@@ -141,6 +141,34 @@ And the page shows "Saved" @timeout:10s
 `@repeat` runs a step N times (`{{i}}`/`{{n}}` = iteration/total); `@retry` re-runs it until it passes. `@concurrency` is
 for API/data steps only; browser steps declare `{ concurrent: false }`. BeforeStep/AfterStep run once per step, or per
 attempt with `{ eachAttempt: true }`.
+
+Resilience:
+
+```gherkin
+@retry:2                      # re-run the whole scenario until it passes (flaky passes are reported)
+Scenario: Pay through a flaky API
+
+@quarantine                   # known bug: runs and reports, never fails the build
+Scenario: Exact totals (BUG-123)
+
+@timeout:2m                   # time budget for the whole scenario
+Scenario: Long import
+```
+
+```ts
+retry: { scenario: 1, delay: '1s', on: ['TimeoutError', '/ECONNRESET/'] },
+groups: { setup: { retry: 1, retryMembers: 'all' } },   // re-run a whole group (hooks included)
+```
+
+```ts
+ctx.soft.check(receipt.total > 0, 'total is positive');  // soft assertions: all failures reported at step end
+```
+
+```bash
+bddx run -f ndjson:reports/run1.ndjson                       # CI run
+bddx run --rerun-failed reports/run1.ndjson -f ndjson:reports/run2.ndjson
+bddx report reports/run1.ndjson reports/run2.ndjson -f html:reports/report.html -f junit:reports/junit.xml
+```
 
 `bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
 

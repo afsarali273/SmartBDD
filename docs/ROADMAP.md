@@ -89,16 +89,17 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [ ] HTML/console view of the executed graph (timeline per worker) — Phase 5
 - [x] Gate: groups, dependencies and locks demo passes (`examples/orchestration`, `npm run example:orchestration`)
 
-## Phase 4: Resilience
+## Phase 4: Resilience ✅ (core)
 
 - [x] Step retry (done early: `@retry:N` on steps, `@stepRetry` per scenario, definition `retry`)
-- [ ] Retry levels: scenario (`@retry` on scenarios — note: on a Scenario line, distinct from step tags), group (`groups.x.retry`), run (`--rerun-failed`)
-- [ ] Policies: attempts, fixed/exponential delay, `retryOn` (error class / message / tag), `RetryAnalyzer` interface
-- [ ] `attempt` hook level (BeforeAttempt/AfterAttempt)
-- [ ] Flaky status (pass after fail), quarantine tag
-- [ ] Rerun-failed from an NDJSON file + report merge
-- [ ] Soft assertions helper
-- [ ] Group/scenario timeouts
+- [x] Scenario retry (`@retry:N`, `@noRetry`, config `retry.scenario`, `--retry`), group retry (`groups.x.retry`, `retryMembers`, `scenarioRetry`), run (`--rerun-failed`)
+- [x] Policies: attempts, delay, `retry.on` (error name / message / regex), `setRetryAnalyzer` (TestNG-style)
+- [x] ~~`attempt` hook level~~ not needed: scenario hooks run per attempt; step hooks have `eachAttempt`
+- [x] Flaky status (pass after fail, incl. merged reruns), `--fail-on-flaky`, `@quarantine`
+- [x] Rerun-failed from an NDJSON file + `bddx report` merge
+- [x] Soft assertions (`ctx.soft.check/run`)
+- [x] Scenario time budget (`@timeout` on scenarios, `scenarioTimeout`)
+- [ ] Group time budget; exponential backoff for scenario retries (step retries already have it)
 
 ## Phase 5: Reporting + DX
 

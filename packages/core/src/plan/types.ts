@@ -32,6 +32,15 @@ export interface GroupConfig {
   locks?: string[];
   /** Tag expression: scenarios matching it join the group (in addition to @group tags). */
   match?: string;
+  /**
+   * Group retry: when the group has finished and any member did not pass, run the group again
+   * (BeforeGroup/AfterGroup included) up to this many extra times. Dependents of members wait until the group settles.
+   */
+  retry?: number;
+  /** Which members a group retry re-runs: 'all' (default) or only 'failed' ones. */
+  retryMembers?: 'all' | 'failed';
+  /** Default scenario retry for members (each member retried on its own, before any group retry). */
+  scenarioRetry?: number;
 }
 
 export interface PlanOptions {
@@ -69,6 +78,10 @@ export interface PlanNode {
   order: number;
   /** Set when the node was not selected but pulled in as a dependency of these node ids. */
   pulledInBy?: string[];
+  /** Scenario retries from `@retry:N` (or `@noRetry` = 0), else the max `scenarioRetry` of its groups. Unset = config default. */
+  retry?: number;
+  /** Tagged @quarantine. */
+  quarantined: boolean;
 }
 
 export interface PlanGroup {
@@ -84,6 +97,9 @@ export interface PlanGroup {
   configured: boolean;
   /** The automatic `default` group created by `defaultMode`: scheduling only, no hooks/events/store. */
   implicit?: boolean;
+  /** Group retry (extra runs of the group). 0 = none. */
+  retry: number;
+  retryMembers: 'all' | 'failed';
 }
 
 export interface PlanError {

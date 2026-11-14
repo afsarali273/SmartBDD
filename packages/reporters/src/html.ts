@@ -4,6 +4,7 @@ import type {
   Attachment,
   BddxEvent,
   ErrorInfo,
+  GroupRetrying,
   HookFinished,
   Log,
   PlannedGroup,
@@ -39,6 +40,8 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
     results: new Map(),
     steps: new Map(),
     attempts: new Map(),
+    retries: new Map(),
+    groupRetries: [],
     attachments: [],
     hookFailures: [],
     logs,
@@ -70,7 +73,15 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
           break;
         }
         case 'scenarioFinished':
-          data.results.set(e.scenarioId, e);
+          {
+            const previous = data.results.get(e.scenarioId); // group retry re-ran it
+            if (previous && previous.status !== 'passed') data.retries.set(e.scenarioId, [...(data.retries.get(e.scenarioId) ?? []), previous]);
+          }
+          if (e.willRetry) data.retries.set(e.scenarioId, [...(data.retries.get(e.scenarioId) ?? []), e]);
+          else data.results.set(e.scenarioId, e);
+          break;
+        case 'groupRetrying':
+          data.groupRetries.push(e);
           break;
         case 'attachment':
           data.attachments.push(e);
@@ -111,6 +122,8 @@ interface ReportData {
   results: Map<string, ScenarioFinished>;
   steps: Map<string, StepFinished>;
   attempts: Map<string, StepAttemptFinished[]>;
+  retries: Map<string, ScenarioFinished[]>;
+  groupRetries: GroupRetrying[];
   attachments: Attachment[];
   hookFailures: HookFinished[];
   logs: LogIndex;
@@ -179,8 +192,17 @@ function renderAttachments(list: Attachment[]): string {
     .join('')}</div>`;
 }
 
+/** Stack lines inside bddx itself or Node internals are noise for test authors. */
+const INTERNAL_FRAME = /[\\/](node_modules[\\/]@bddx|packages[\\/](runtime|core|cli|reporters)[\\/](dist|src))[\\/]|node:internal|node:async_hooks/;
+
+export function trimStack(stack: string): string {
+  const lines = stack.split('\n');
+  const kept = lines.filter((l) => !/^\s+at /.test(l) || !INTERNAL_FRAME.test(l));
+  return kept.join('\n');
+}
+
 function renderError(e: ErrorInfo | undefined): string {
-  return e ? `<pre class="err">${esc(e.stack ?? e.message)}</pre>` : '';
+  return e ? `<pre class="err">${esc(e.stack ? trimStack(e.stack) : e.message)}</pre>` : '';
 }
 
 export function renderHtml(d: ReportData): string {
@@ -213,6 +235,17 @@ export function renderHtml(d: ReportData): string {
             ...(sc.groups ?? []).map((g) => `<span class="chip grp">group:${esc(g)}</span>`),
             ...sc.tags.map((t) => `<span class="chip">${esc(t)}</span>`),
           ].join('');
+          const prior = d.retries.get(sc.id) ?? [];
+          const flags = [
+            r?.flaky ? '<span class="pill flaky">flaky</span>' : '',
+            r?.quarantined ? '<span class="pill quarantined">quarantined</span>' : '',
+            prior.length ? `<span class="pill retried">${prior.length + 1} attempts</span>` : '',
+          ].join('');
+          const priorHtml = prior.length
+            ? `<details class="tries"><summary>earlier attempts (${prior.length})</summary><ol>${prior
+                .map((a) => `<li class="st-failed"><span class="ico">✘</span> attempt ${a.attempt} <span class="dur">${ms(a.durationMs)}</span>${a.error ? `<div class="terr">${esc(a.error.message)}</div>` : ''}</li>`)
+                .join('')}</ol></details>`
+            : '';
           const deps = sc.dependsOn?.length
             ? `<div class="deps">waits for ${sc.dependsOn.map((x) => `<code>${esc(x.id)}</code>${x.soft ? ' (soft)' : ''}`).join(', ')}</div>`
             : '';
@@ -245,10 +278,10 @@ export function renderHtml(d: ReportData): string {
           return `<details class="scenario st-${status}" data-status="${status}" data-text="${text}"${open}>
 <summary><span class="ico">${ICON[status]}</span><span class="name">${esc(sc.name)}</span>${
             sc.ruleName ? `<span class="rule">Rule: ${esc(sc.ruleName)}</span>` : ''
-          }${row ? `<span class="row">${esc(row)}</span>` : ''}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span></summary>
+          }${row ? `<span class="row">${esc(row)}</span>` : ''}${flags}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span></summary>
 <div class="body"><div class="where"><code>${esc(sc.id)}</code> · ${esc(sc.uri)}:${sc.line}</div>${chips ? `<div class="chips">${chips}</div>` : ''}${deps}${
             r?.reason ? `<div class="reason">Skipped: ${esc(r.reason)}</div>` : ''
-          }${renderError(status === 'failed' && !sc.steps.some((st) => d.steps.get(`${sc.id}|${st.id}`)?.error) ? r?.error : undefined)}${renderLogs(
+          }${priorHtml}${renderError(status === 'failed' && !sc.steps.some((st) => d.steps.get(`${sc.id}|${st.id}`)?.error) ? r?.error : undefined)}${renderLogs(
             d.logs.scenarioOnly(sc.id),
           )}${renderAttachments(attBy.get(`${sc.id}|`) ?? [])}<ol class="steps">${steps}</ol></div></details>`;
         })
@@ -262,7 +295,9 @@ export function renderHtml(d: ReportData): string {
   const totals = s
     ? ORDER.filter((st) => s.scenarios[st] > 0)
         .map((st) => `<label class="pill st-${st}"><input type="checkbox" data-filter="${st}" checked> ${s.scenarios[st]} ${st}</label>`)
-        .join('')
+        .join('') +
+      (s.flaky ? `<span class="pill flaky">${s.flaky} flaky</span>` : '') +
+      (s.quarantined ? `<span class="pill quarantined">${s.quarantined} quarantined</span>` : '')
     : '';
   const groups = d.groups.length
     ? `<div class="groups">${d.groups
@@ -271,8 +306,10 @@ export function renderHtml(d: ReportData): string {
     : '';
   const hookFailures = d.hookFailures.filter((h) => !h.scenarioId);
   const runSection =
-    hookFailures.length || d.logs.run.length || d.runError
-      ? `<section class="feature run"><h2>Run</h2>${renderError(d.runError)}${hookFailures
+    hookFailures.length || d.logs.run.length || d.runError || d.groupRetries.length
+      ? `<section class="feature run"><h2>Run</h2>${renderError(d.runError)}${d.groupRetries
+          .map((g) => `<div class="reason">↻ group ${esc(g.group)}: attempt ${g.attempt}, re-ran ${g.scenarioIds.map((x) => `<code>${esc(x)}</code>`).join(', ')}</div>`)
+          .join('')}${hookFailures
           .map((h) => `<div class="reason">${esc(h.kind)} ${esc(h.level)} hook "${esc(h.hookName)}"${h.uri ? ` (${esc(h.uri)})` : ''} failed</div>${renderError(h.error)}`)
           .join('')}${renderLogs(d.logs.run)}</section>`
       : '';
@@ -314,6 +351,7 @@ pre.err{border-color:var(--failed);color:var(--failed)}pre.snippet{border-style:
 .lv-debug .lvl{color:var(--debug)}.lv-info .lvl{color:var(--info)}.lv-warn .lvl{color:var(--warn)}.lv-error .lvl{color:var(--error)}
 .log .msg{white-space:pre-wrap}.log .data{color:var(--muted);white-space:pre-wrap;flex-basis:100%;margin-left:5.8em}
 .logimg{flex-basis:100%;margin-left:5.8em}.logimg img{max-width:min(100%,640px);max-height:420px;border:1px solid var(--line);border-radius:4px;margin:3px 0}.logfile{margin-left:4px}
+.pill.flaky{color:var(--pending)}.pill.quarantined{color:var(--skipped)}.pill.retried{color:var(--muted)}
 .tries{margin:2px 0 2px 22px;font-size:12px}.tries summary{cursor:pointer;color:var(--muted)}.tries ol{margin:2px 0;padding-left:18px;max-height:240px;overflow:auto}
 .tries li{list-style:none}.tries .ico{display:inline-block}.terr{color:var(--failed);margin-left:1.6em;white-space:pre-wrap}.nth{color:var(--muted);font-size:11px}
 .atts{margin:2px 0 2px 22px}figure{margin:6px 0}figcaption{font-size:12px;color:var(--muted)}figure img{max-width:min(100%,900px);border:1px solid var(--line);border-radius:4px}

@@ -8,6 +8,8 @@
  *   - its groups have capacity (serial = 1, parallel = `workers` or unlimited),
  *   - exclusivity holds (an exclusive node starts only when nothing runs, and blocks others).
  * A ready node whose HARD dependency did not pass is skipped ("dependency failed: <id> (<status>)").
+ * Retry groups: a dependency on a member counts as done only when the member's retry group has SETTLED
+ * (no further group retry), unless the dependent is in that same group.
  *
  * In-process concurrency (async). Worker processes (true isolation) plug in later behind `runNode`.
  */
@@ -20,6 +22,11 @@ export interface SchedulerCallbacks {
   skipNode(node: PlanNode, reason: string): Promise<void>;
   /** A reason to stop starting new nodes (fail-fast, fatal BeforeAll), or undefined. */
   stopReason(): string | undefined;
+  /**
+   * Retry groups (plan.groups[g].retry > 0): called when every member has a result. Return member ids to run again
+   * (group retry), or undefined to settle the group. Dependents of members wait until their groups settle.
+   */
+  settleGroup?(group: string): Promise<string[] | undefined>;
 }
 
 export interface ScheduleOptions {
@@ -35,8 +42,13 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
   const groupRunning = new Map<string, number>();
   const freeSlots = Array.from({ length: plan.workers }, (_, i) => `w${i + 1}`);
   let exclusiveRunning = false;
+  const retryGroups = new Set([...plan.groups.values()].filter((g) => g.retry > 0).map((g) => g.name));
+  const settled = new Set<string>();
+  const toCheck: string[] = [];
 
-  const depsDone = (n: PlanNode) => n.deps.every((d) => results.has(d.target));
+  const targetSettled = (target: string, dependent: PlanNode) =>
+    plan.byId.get(target)!.groups.every((g) => !retryGroups.has(g) || settled.has(g) || dependent.groups.includes(g));
+  const depsDone = (n: PlanNode) => n.deps.every((d) => results.has(d.target) && targetSettled(d.target, n));
   const groupCap = (g: string) => {
     const pg = plan.groups.get(g);
     if (!pg) return Infinity;
@@ -67,15 +79,42 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
         freeSlots.push(slot);
         freeSlots.sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
         running.delete(n.id);
+        queueGroupChecks(n);
       });
     running.set(n.id, p);
   };
 
+  const queueGroupChecks = (n: PlanNode) => {
+    for (const g of n.groups) {
+      if (!retryGroups.has(g) || settled.has(g) || toCheck.includes(g)) continue;
+      if (plan.groups.get(g)!.members.every((id) => results.has(id))) toCheck.push(g);
+    }
+  };
+
+  const checkGroups = async (): Promise<boolean> => {
+    let changed = false;
+    while (toCheck.length) {
+      const g = toCheck.shift()!;
+      const rerun = cb.settleGroup ? await cb.settleGroup(g) : undefined;
+      if (rerun?.length) {
+        for (const id of rerun) {
+          results.delete(id);
+          pending.add(id);
+        }
+      } else settled.add(g);
+      changed = true;
+    }
+    return changed;
+  };
+
   for (;;) {
+    // 0. Retry groups whose members all finished: settle or re-run.
+    await checkGroups();
     // 1. Skip what can never run (stop reason, failed hard dependency). Repeat: skips cascade.
     let changed = true;
     while (changed) {
       changed = false;
+      if (await checkGroups()) changed = true;
       for (const n of plan.nodes) {
         if (!pending.has(n.id) || !depsDone(n)) continue;
         const stop = cb.stopReason();
@@ -86,6 +125,7 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
           pending.delete(n.id);
           results.set(n.id, 'skipped');
           await cb.skipNode(n, stop ?? `dependency failed: ${failed!.target} (${results.get(failed!.target)})`);
+          queueGroupChecks(n);
           changed = true;
         }
       }
@@ -101,6 +141,7 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
     }
 
     if (!running.size) {
+      if (toCheck.length) continue;
       if (!pending.size) break;
       // Nothing running, nothing startable: only possible with an unvalidated cycle. Never hang.
       for (const id of [...pending]) {

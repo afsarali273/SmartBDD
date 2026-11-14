@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
-import { discoverSpecs, makeDataLoader, prepareRun, registerTypeScriptLoader, runBddx } from './run.js';
+import { discoverSpecs, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
 import type { Reporter } from '@bddx/reporters';
 
 const HELP = `bddx ${BDDX_VERSION}
@@ -12,6 +12,8 @@ Usage:
   bddx [run] [paths...] [options]    Run scenarios (paths may be files, folders, globs, file:line)
   bddx list  [paths...] [options]    List selected scenarios with ids and tags, without running
   bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
+  bddx report <events.ndjson...>     Build reports from event files; several files are merged (later runs win)
+             -f html:reports/report.html -f junit:reports/junit.xml
   bddx plan  [paths...] [options]    Show the execution plan: groups, dependencies, locks (runs nothing)
              --plan-format text|json|mermaid    --explain <scenario id>
 
@@ -30,6 +32,9 @@ Options:
   -s, --set <path=value>  Override any config value (repeatable), e.g. --set groups.checkout.mode=serial
       --log-level <level> Console logs: debug | info | warn (default) | error | silent
       --no-deps           Do not pull in dependencies of selected scenarios
+  -r, --retry <n>         Retry failed scenarios up to n times (config retry.scenario; @retry:N per scenario)
+      --fail-on-flaky     Fail the run when a scenario passed only after a retry
+      --rerun-failed <f>  Run only scenarios that did not pass in events file <f> (+ their dependencies)
   -h, --help              Show help
   -v, --version           Show version
 
@@ -57,6 +62,9 @@ export async function main(argv: string[]): Promise<number> {
         timeout: { type: 'string' },
         workers: { type: 'string', short: 'w' },
         set: { type: 'string', short: 's', multiple: true },
+        retry: { type: 'string', short: 'r' },
+        'fail-on-flaky': { type: 'boolean' },
+        'rerun-failed': { type: 'string' },
         'log-level': { type: 'string' },
         'plan-format': { type: 'string' },
         explain: { type: 'string' },
@@ -80,7 +88,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (['run', 'list', 'snippets', 'plan'].includes(positionals[0] ?? '')) {
+  if (['run', 'list', 'snippets', 'plan', 'report'].includes(positionals[0] ?? '')) {
     command = positionals[0]!;
     paths = positionals.slice(1);
   }
@@ -95,6 +103,9 @@ export async function main(argv: string[]): Promise<number> {
 
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
+    if (command === 'report') return await reportFromEvents(paths, values.format ?? []);
+    const retry = values.retry !== undefined ? Number(values.retry) : undefined;
+    if (retry !== undefined && (!Number.isInteger(retry) || retry < 0)) throw new UsageError(`--retry expects a whole number >= 0, got "${values.retry}"`);
     const workers = values.workers !== undefined ? Number(values.workers) : undefined;
     const logLevel = values['log-level'];
     if (logLevel !== undefined && !['debug', 'info', 'warn', 'error', 'silent'].includes(logLevel)) {
@@ -142,6 +153,9 @@ export async function main(argv: string[]): Promise<number> {
       ...(values.timeout ? { stepTimeoutMs: Number(values.timeout) } : {}),
       ...(workers ? { workers } : {}),
       ...(noDeps ? { withDeps: false } : {}),
+      ...(retry !== undefined ? { retry } : {}),
+      ...(values['fail-on-flaky'] ? { failOnFlaky: true } : {}),
+      ...(values['rerun-failed'] ? { rerunFailed: values['rerun-failed'] } : {}),
     });
     return outcome.exitCode;
   } catch (err) {

@@ -5,6 +5,10 @@ import { glob } from 'tinyglobby';
 import {
   EventBus,
   buildPlan,
+  idsToRerun,
+  mergeEventStreams,
+  parseDuration,
+  parseNdjson,
   createFileDataLoader,
   type LogLevel,
   type Plan,
@@ -17,7 +21,7 @@ import {
   type RunSummary,
   type ScenarioInstance,
 } from '@bddx/core';
-import { Executor, getGlobalRegistry } from '@bddx/runtime';
+import { Executor, getGlobalRegistry, type RetryOptions } from '@bddx/runtime';
 import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
 import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
 
@@ -46,6 +50,11 @@ export interface RunRequest {
   sets?: string[];
   /** Console log level (overrides config `logLevel`). */
   logLevel?: LogLevel;
+  /** Extra attempts for failed scenarios (overrides config retry.scenario). */
+  retry?: number;
+  failOnFlaky?: boolean;
+  /** NDJSON events of an earlier run: run only scenarios that did not pass there (plus their dependencies). */
+  rerunFailed?: string;
 }
 
 export interface RunOutcome {
@@ -98,6 +107,8 @@ export async function discoverSupportFiles(rootDir: string, patterns: string[]):
 /** The whole `bddx run` pipeline, usable programmatically. */
 export interface PreparedRun {
   rootDir: string;
+  /** Set with --rerun-failed: the ids that did not pass in the earlier run. */
+  rerunIds?: string[] | undefined;
   opts: BddxOptions;
   specs: ParsedSpec[];
   all: ScenarioInstance[];
@@ -115,6 +126,12 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   let opts: BddxOptions = req.sets?.length ? applySetOverrides(loaded.options, req.sets) : loaded.options;
   const cliOverrides: BddxOptions = {};
   if (req.logLevel) cliOverrides.logLevel = req.logLevel;
+  if (req.retry !== undefined || req.failOnFlaky !== undefined) {
+    cliOverrides.retry = {
+      ...(req.retry !== undefined ? { scenario: req.retry } : {}),
+      ...(req.failOnFlaky !== undefined ? { failOnFlaky: req.failOnFlaky } : {}),
+    };
+  }
   if (req.tags) cliOverrides.tags = req.tags;
   if (req.name) cliOverrides.name = req.name;
   if (req.params) cliOverrides.params = req.params;
@@ -147,12 +164,21 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   }
   const inPaths = new Set(files);
   const all = specs.flatMap((s) => s.scenarios);
+  let rerunIds: string[] | undefined;
+  if (req.rerunFailed) {
+    const file = resolve(cwd, req.rerunFailed);
+    const text = await readFile(file, 'utf8').catch(() => {
+      throw new UsageError(`--rerun-failed: cannot read ${file}`);
+    });
+    rerunIds = idsToRerun(parseNdjson(text));
+  }
   const selected = selectScenarios(
     all.filter((s) => inPaths.has(s.uri)),
     {
       ...(opts.tags ? { tags: opts.tags } : {}),
       ...(opts.name ? { name: opts.name } : {}),
       ...(Object.keys(lines).length ? { lines } : {}),
+      ...(rerunIds ? { ids: rerunIds } : {}),
     },
   );
   const plan = buildPlan(all, selected, {
@@ -166,13 +192,18 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
     ...(req.sets?.length ? [`--set: ${req.sets.join(' ')}`] : []),
     `specs: ${files.length} selected file(s), ${allFiles.length} parsed; scenarios: ${all.length} total, ${selected.length} selected`,
     `plan: ${plan.nodes.length} node(s), workers=${plan.workers}${opts.defaultMode ? `, defaultMode=${opts.defaultMode}` : ''}`,
+    ...(rerunIds ? [`rerun: ${rerunIds.length} scenario(s) did not pass in ${req.rerunFailed}`] : []),
   ]);
-  return { rootDir, opts, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
+  return { rootDir, opts, rerunIds, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
 }
 
 /** The whole `bddx run` pipeline, usable programmatically. */
 export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
-  const { rootDir, opts, specs, plan } = await prepareRun(req);
+  const { rootDir, opts, specs, plan, rerunIds } = await prepareRun(req);
+  if (rerunIds && !plan.nodes.length) {
+    process.stdout.write(`Nothing to rerun: every scenario passed in ${req.rerunFailed}.\n`);
+    return { success: true, exitCode: 0, scenarios: [] };
+  }
   if (plan.errors.length) {
     process.stderr.write(`bddx: invalid execution plan:\n${plan.errors.map((e) => `  ${e.uri ? `${e.uri}:${e.line} ` : ''}${e.message}`).join('\n')}\n`);
     return { success: false, exitCode: 2, scenarios: plan.nodes.map((n) => n.scenario) };
@@ -201,6 +232,8 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
     failFast: !!opts.failFast,
     strict: opts.strict ?? true,
     params: opts.params ?? {},
+    ...(opts.retry ? { retry: toRetryOptions(opts.retry) } : {}),
+    ...(opts.scenarioTimeout !== undefined ? { scenarioTimeoutMs: toMs(opts.scenarioTimeout, 'scenarioTimeout') } : {}),
   }).execute(plan.nodes.map((n) => n.scenario));
 
   const listenerErrors = await bus.flush();
@@ -239,6 +272,45 @@ function resolveOutputFile(spec: ReporterSpec, rootDir: string): ReporterSpec {
     return [spec[0], { ...spec[1], outputFile: resolve(rootDir, spec[1]['outputFile']) }];
   }
   return spec;
+}
+
+function toMs(v: string | number, name: string): number {
+  if (typeof v === 'number') return v;
+  try {
+    return parseDuration(v);
+  } catch (e) {
+    throw new UsageError(`${name}: ${(e as Error).message}`);
+  }
+}
+
+function toRetryOptions(r: NonNullable<BddxOptions['retry']>): RetryOptions {
+  const out: RetryOptions = {};
+  if (r.scenario !== undefined) {
+    if (!Number.isInteger(r.scenario) || r.scenario < 0) throw new UsageError(`retry.scenario must be a whole number >= 0`);
+    out.scenario = r.scenario;
+  }
+  if (r.delay !== undefined) out.delayMs = toMs(r.delay, 'retry.delay');
+  if (r.on) out.on = r.on.map((x) => (/^\/.+\/[a-z]*$/.test(x) ? new RegExp(x.slice(1, x.lastIndexOf('/')), x.slice(x.lastIndexOf('/') + 1)) : x));
+  if (r.failOnFlaky !== undefined) out.failOnFlaky = r.failOnFlaky;
+  return out;
+}
+
+/** Replay one or more NDJSON event files (merged: later runs win) into reporters. */
+export async function reportFromEvents(files: string[], formats: ReporterSpec[], cwd = process.cwd()): Promise<0 | 1 | 2> {
+  if (!files.length) throw new UsageError('bddx report: give at least one NDJSON events file');
+  const streams = [];
+  for (const f of files) {
+    const text = await readFile(resolve(cwd, f), 'utf8').catch(() => {
+      throw new UsageError(`bddx report: cannot read ${f}`);
+    });
+    streams.push(parseNdjson(text));
+  }
+  const merged = mergeEventStreams(streams);
+  const reporters = (formats.length ? formats : ['console']).map((spec) => createReporter(resolveOutputFile(spec, cwd)));
+  for (const e of merged) for (const r of reporters) await r.onEvent(e);
+  for (const r of reporters) await r.close?.();
+  const end = merged.at(-1);
+  return end?.type === 'runFinished' && end.success ? 0 : 1;
 }
 
 /** CLI-side diagnostics (before the event bus exists) go to stderr at --log-level debug. */

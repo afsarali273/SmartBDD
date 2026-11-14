@@ -28,6 +28,7 @@ Every engine implements exactly these steps (see `ts/steps.ts` for the reference
 | `a step that sleeps {int} ms` | waits |
 | `a step that passes on attempt {int}` | records `attempt <k>` (k = ctx.step.attempt); throws until k >= n |
 | `a step that fails on repetition {int}` | records `repetition <k>`; throws when k = n |
+| `a step that passes on scenario attempt {int}` | records `scenario attempt <k>` (k = ctx.scenario.attempt); throws until k >= n |
 
 Step-level tags (`@repeat`, `@retry`, `@delay`, `@backoff`, `@timeout`, `@concurrency`) and `{{i}}`/`{{n}}` placeholders
 are part of the contract (see `step-repeat-retry.feature`).

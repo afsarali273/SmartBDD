@@ -203,3 +203,17 @@ describe('logs and images in file reports', () => {
     ]);
   });
 });
+
+describe('stack trimming', () => {
+  it('drops bddx-internal and node-internal frames, keeps user frames', async () => {
+    const { trimStack } = await import('../src/html.js');
+    const stack = [
+      'Error: boom',
+      '    at Object.fn (/proj/steps/a.steps.ts:3:9)',
+      '    at file:///x/node_modules/@bddx/runtime/dist/executor.js:5:1',
+      '    at /repo/packages/runtime/src/executor.ts:10:2',
+      '    at AsyncLocalStorage.run (node:internal/async_local_storage/async_hooks:91:14)',
+    ].join('\n');
+    expect(trimStack(stack)).toBe('Error: boom\n    at Object.fn (/proj/steps/a.steps.ts:3:9)');
+  });
+});

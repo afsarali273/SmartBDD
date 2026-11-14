@@ -14,6 +14,7 @@ import { hookDecorator, staticHookDecorator, stepDecorator, type MethodDecorator
 import type {
   FeatureHookFn,
   GroupHookFn,
+  RetryAnalyzer,
   HookOptions,
   RunHookFn,
   ScenarioHookFn,
@@ -101,6 +102,14 @@ export const AfterScenario = After;
 
 export function defineParameterType<T>(options: ParameterTypeOptions<T>): void {
   getGlobalRegistry().defineParameterType(options);
+}
+
+/**
+ * Custom scenario-retry decision, TestNG IRetryAnalyzer style. Called after a failed attempt when a retry is
+ * allowed by @retry / config; return false to stop retrying (e.g. only retry network errors).
+ */
+export function setRetryAnalyzer(analyzer: RetryAnalyzer | undefined): void {
+  getGlobalRegistry().retryAnalyzer = analyzer;
 }
 
 /** Default timeout (ms) for steps and hooks without their own `timeoutMs`. 0 disables. */

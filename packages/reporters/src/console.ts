@@ -53,6 +53,7 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
   const plan = new Map<string, PlannedScenario>();
   const steps = new Map<string, StepFinished[]>();
   const failures: Array<{ scenario: PlannedScenario; message: string; stack?: string }> = [];
+  const quarantinedFailures: Array<{ scenario: PlannedScenario; message: string }> = [];
   const snippets = new Set<string>();
   const hookErrors: string[] = [];
   const parseErrors: string[] = [];
@@ -90,14 +91,29 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             hookErrors.push(`${e.kind} ${e.level} hook "${e.hookName}"${e.uri ? ` (${e.uri})` : ''}: ${e.error?.message ?? ''}`);
           }
           break;
+        case 'groupRetrying':
+          // Members failed in the previous group attempt; they run again, so they are not (yet) failures.
+          for (let i = failures.length - 1; i >= 0; i--) if (e.scenarioIds.includes(failures[i]!.scenario.id)) failures.splice(i, 1);
+          if (style === 'pretty') write(c('pending', `\n↻ group ${e.group}: attempt ${e.attempt}, re-running ${e.scenarioIds.length} scenario(s)\n`));
+          break;
         case 'scenarioFinished': {
           const s = plan.get(e.scenarioId);
           if (!s) break;
+          if (e.willRetry) {
+            if (style === 'progress') write(c('pending', 'r'));
+            else {
+              write(`  ${c('pending', '↻')} ${s.name} ${dim(`attempt ${e.attempt} failed${e.error ? `: ${e.error.message.split('\n')[0]}` : ''} — retrying`)}\n`);
+              scenarioLogs.delete(e.scenarioId);
+              steps.delete(e.scenarioId);
+            }
+            break;
+          }
           if (e.error && (e.status === 'failed' || e.status === 'ambiguous')) {
-            failures.push({ scenario: s, message: e.error.message, ...(e.error.stack ? { stack: e.error.stack } : {}) });
+            if (e.quarantined) quarantinedFailures.push({ scenario: s, message: e.error.message });
+            else failures.push({ scenario: s, message: e.error.message, ...(e.error.stack ? { stack: e.error.stack } : {}) });
           }
           if (style === 'progress') {
-            write(c(e.status, e.status === 'passed' ? '.' : ICON[e.status]));
+            write(c(e.status, e.status === 'passed' ? (e.flaky ? 'f' : '.') : ICON[e.status]));
             break;
           }
           if (s.featureName !== currentFeature) {
@@ -105,7 +121,11 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             write(`\n${s.featureName}  ${dim(s.uri)}\n`);
           }
           const retried = (steps.get(e.scenarioId) ?? []).filter((x) => x.mode === 'retry' && (x.attempts ?? 1) > 1).length;
-          const extra = (e.reason ? dim(` — ${e.reason}`) : '') + (retried ? dim(` (${retried} step${retried > 1 ? 's' : ''} retried)`) : '');
+          const extra =
+            (e.reason ? dim(` — ${e.reason}`) : '') +
+            (retried ? dim(` (${retried} step${retried > 1 ? 's' : ''} retried)`) : '') +
+            (e.flaky ? c('pending', ` flaky (passed on attempt ${e.attempt})`) : '') +
+            (e.quarantined ? c('skipped', ' [quarantined]') : '');
           const ex = s.example;
           const row = !ex
             ? ''
@@ -139,11 +159,22 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
               if (frame) write(`     ${dim(frame.trim())}\n`);
             });
           }
+          if (quarantinedFailures.length) {
+            write(`\n${c('skipped', 'Quarantined failures (do not fail the run):')}\n`);
+            for (const q of quarantinedFailures) write(`  - ${q.scenario.name} ${dim(`${q.scenario.uri}:${q.scenario.line}`)}: ${q.message.split('\n')[0]}\n`);
+          }
           if (snippets.size) {
             write(`\n${c('undefined', 'Undefined steps. Implement them with:')}\n\n`);
             for (const s of snippets) write(`${s}\n\n`);
           }
-          write(`\n${formatCounts('scenario', scenarios, c)}\n${formatCounts('step', st, c)}\n${dim(`${(durationMs / 1000).toFixed(2)}s`)}\n`);
+          const extras = [
+            e.summary.flaky ? c('pending', `${e.summary.flaky} flaky`) : '',
+            e.summary.retried ? `${e.summary.retried} retried` : '',
+            e.summary.quarantined ? c('skipped', `${e.summary.quarantined} quarantined`) : '',
+          ].filter(Boolean);
+          write(
+            `\n${formatCounts('scenario', scenarios, c)}${extras.length ? ` · ${extras.join(', ')}` : ''}\n${formatCounts('step', st, c)}\n${dim(`${(durationMs / 1000).toFixed(2)}s`)}\n`,
+          );
           if (e.error) write(`${c('failed', `Run error: ${e.error.message}`)}\n`);
           write(e.success ? c('passed', '\nPASSED\n') : c('failed', '\nFAILED\n'));
           break;

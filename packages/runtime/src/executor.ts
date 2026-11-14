@@ -53,8 +53,17 @@ import { DataTable, DocString } from './datatable.js';
 import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
-import { PendingSignal, SkipSignal, withTimeout } from './signals.js';
-import type { CurrentStepInfo, FeatureContext, GroupContext, HookDefinition, RunContext, StepContext, StepRetryOption } from './types.js';
+import { PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
+import type {
+  CurrentStepInfo,
+  FeatureContext,
+  GroupContext,
+  HookDefinition,
+  RunContext,
+  SoftAssert,
+  StepContext,
+  StepRetryOption,
+} from './types.js';
 
 export interface ExecuteOptions {
   registry: SupportRegistry;
@@ -70,6 +79,21 @@ export interface ExecuteOptions {
   strict?: boolean;
   params?: Record<string, string>;
   runId?: string;
+  /** Scenario retry defaults (tags @retry:N / group scenarioRetry override `scenario`). */
+  retry?: RetryOptions;
+  /** Default time budget per scenario attempt (ms); `@timeout:<dur>` on a scenario overrides. 0/undefined = none. */
+  scenarioTimeoutMs?: number;
+}
+
+export interface RetryOptions {
+  /** Extra attempts for failed scenarios. Default 0. */
+  scenario?: number;
+  /** Pause before a retry (ms). */
+  delayMs?: number;
+  /** Only retry when the error name or message matches one of these (strings match name exactly or message substring). */
+  on?: Array<string | RegExp>;
+  /** A scenario that passed only after a retry fails the run. Default false. */
+  failOnFlaky?: boolean;
 }
 
 export interface ExecuteResult {
@@ -106,6 +130,13 @@ export class Executor {
   private runError: unknown;
   private stopReason: string | undefined;
   private readonly exportsById = new Map<string, Record<string, unknown>>();
+  /** Step statuses of each scenario's LAST attempt (for the summary). */
+  private readonly lastStepStatuses = new Map<string, Status[]>();
+  /** Scenarios that had a non-passed attempt (scenario or group retry) — a later pass is flaky. */
+  private readonly failedBefore = new Set<string>();
+  private readonly attemptsUsed = new Map<string, number>();
+  private readonly flaky = new Set<string>();
+  private readonly groupAttempts = new Map<string, number>();
   // populated per run
   private runScope = new Scope('run');
   private plan!: Plan;
@@ -191,6 +222,7 @@ export class Executor {
           await this.release(node);
         },
         stopReason: () => this.stopReason,
+        settleGroup: (group) => this.settleGroup(group),
       },
       { ignoreDependencyResults: !!this.opts.dryRun },
     );
@@ -210,10 +242,26 @@ export class Executor {
 
     setFallbackLogger(undefined);
     this.summary.durationMs = Date.now() - started;
-    const sc = this.summary.scenarios;
+    // Summary from FINAL attempts only.
     const strict = this.opts.strict ?? true;
-    const bad = sc.failed + (strict ? sc.pending + sc.undefined + sc.ambiguous : 0);
-    const success = !this.runFailed && bad === 0;
+    let bad = 0;
+    for (const n of plan.nodes) {
+      const st = this.statuses.get(n.id) ?? 'skipped';
+      this.summary.scenarios[st] += 1;
+      this.summary.scenarios.total += 1;
+      if (n.quarantined) this.summary.quarantined! += 1;
+      if ((this.attemptsUsed.get(n.id) ?? 1) > 1) this.summary.retried! += 1;
+      const isBad = st === 'failed' || (strict && (st === 'pending' || st === 'undefined' || st === 'ambiguous'));
+      if (isBad && !n.quarantined) bad++;
+      for (const ss of this.lastStepStatuses.get(n.id) ?? []) {
+        this.summary.steps[ss] += 1;
+        this.summary.steps.total += 1;
+      }
+    }
+    this.summary.flaky = this.flaky.size;
+    const flakyFails = !!this.opts.retry?.failOnFlaky && this.flaky.size > 0;
+    if (flakyFails) this.runError ??= new Error(`${this.flaky.size} flaky scenario(s) and failOnFlaky is on`);
+    const success = !this.runFailed && bad === 0 && !flakyFails;
     bus.emit({
       type: 'runFinished',
       success,
@@ -249,8 +297,17 @@ export class Executor {
         const rfatal = await this.openRule(s, of.scope).opened;
         if (rfatal) return this.skipScenario(s, rfatal, workerId);
       }
-      const status = await this.runScenario(s, this.runScope, of.scope, 1, workerId, groupStores);
-      if (status === 'failed' && this.opts.failFast) this.stopReason ??= 'fail-fast: an earlier scenario failed';
+      let attempt = this.attemptsUsed.get(node.id) ?? 0;
+      let status: Status;
+      for (;;) {
+        attempt++;
+        this.attemptsUsed.set(node.id, attempt);
+        const r = await this.runScenario(s, this.runScope, of.scope, attempt, workerId, groupStores, node);
+        status = r.status;
+        if (!r.willRetry) break;
+        if (this.opts.retry?.delayMs) await sleep(this.opts.retry.delayMs);
+      }
+      if (status === 'failed' && this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
       return status;
     } finally {
       await this.release(node);
@@ -394,9 +451,13 @@ export class Executor {
     attempt = 1,
     workerId = 'w1',
     groupStores: Record<string, Store> = {},
-  ): Promise<Status> {
+    node?: PlanNode,
+  ): Promise<{ status: Status; willRetry: boolean }> {
     const { bus } = this.opts;
     const started = Date.now();
+    this.exportsById.delete(scenario.id); // exports belong to the attempt that produced them
+    const timeoutMs = scenarioTimeout(scenario) ?? this.opts.scenarioTimeoutMs;
+    const deadline = timeoutMs ? started + timeoutMs : undefined;
     const scope = new Scope('scenario');
     const tagNames = scenario.tags.map((t) => t.name);
     const ids: Emitters = { scenarioId: scenario.id };
@@ -419,9 +480,16 @@ export class Executor {
       }
     }
 
+    const stepStatuses: Status[] = [];
     for (const step of scenario.steps) {
-      const result = await this.runStep(step, scenario, ctx, tagNames, blocked || dry);
+      if (deadline && !blocked && !dry && Date.now() >= deadline) {
+        blocked = true;
+        statuses.push('failed');
+        error ??= new TimeoutError(`Scenario "${scenario.name}"`, timeoutMs!);
+      }
+      const result = await this.runStep(step, scenario, ctx, tagNames, blocked || dry, deadline, timeoutMs);
       statuses.push(result.status);
+      stepStatuses.push(result.status);
       if (result.status !== 'passed' && !blocked) {
         blocked = true;
         error ??= result.error;
@@ -447,8 +515,77 @@ export class Executor {
 
     // Dry run: every matched step is reported 'skipped', so the scenario is 'skipped' unless something is undefined/ambiguous.
     const status = worstStatus(statuses);
-    this.finishScenario(scenario, attempt, status, Date.now() - started, error, status === 'skipped' ? skipReason : undefined);
-    return status;
+    this.lastStepStatuses.set(scenario.id, stepStatuses);
+    const willRetry = !dry && status === 'failed' && (await this.shouldRetry(scenario, node, attempt, error));
+    if (status !== 'passed') this.failedBefore.add(scenario.id);
+    this.finishScenario(scenario, attempt, status, Date.now() - started, error, status === 'skipped' ? skipReason : undefined, {
+      willRetry,
+      quarantined: !!node?.quarantined || 'quarantine' in scenario.meta,
+    });
+    return { status, willRetry };
+  }
+
+  /** Scenario retry decision: attempts left (tag/group/config), error filter, custom analyzer. */
+  private async shouldRetry(s: ScenarioInstance, node: PlanNode | undefined, attempt: number, error: unknown): Promise<boolean> {
+    const max = node?.retry ?? this.opts.retry?.scenario ?? 0;
+    if (attempt > max) return false;
+    const info = error === undefined ? undefined : toErrorInfo(error);
+    const on = this.opts.retry?.on;
+    if (on?.length && info) {
+      const hit = on.some((m) => (typeof m === 'string' ? info.name === m || info.message.includes(m) : m.test(`${info.name ?? ''}: ${info.message}`)));
+      if (!hit) return false;
+    }
+    const analyzer = this.opts.registry.retryAnalyzer;
+    if (analyzer) {
+      try {
+        return !!(await analyzer({
+          scenario: {
+            id: s.id,
+            name: s.name,
+            uri: s.uri,
+            line: s.line,
+            featureName: s.feature.name,
+            tags: s.tags.map((t) => t.name),
+            meta: { ...s.meta },
+            attempt,
+          },
+          attempt,
+          maxRetries: max,
+          ...(info ? { error: { message: info.message, ...(info.name ? { name: info.name } : {}) } } : {}),
+        }));
+      } catch (e) {
+        this.debug(`retry analyzer threw (${toErrorInfo(e).message}); not retrying`, { scenarioId: s.id });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Group retry: called by the scheduler once every member of a retry group has a result.
+   * Returns the member ids to run again (and re-opens the group / their feature & rule scopes), or undefined to settle.
+   */
+  private async settleGroup(name: string): Promise<string[] | undefined> {
+    const g = this.plan.groups.get(name);
+    if (!g || !g.retry) return undefined;
+    const used = this.groupAttempts.get(name) ?? 1;
+    const notPassed = g.members.filter((id) => this.statuses.get(id) !== 'passed');
+    if (!notPassed.length || used > g.retry || this.stopReason) return undefined;
+    const rerun = g.retryMembers === 'failed' ? notPassed : [...g.members];
+    this.groupAttempts.set(name, used + 1);
+    this.groups.delete(name); // BeforeGroup runs again
+    for (const id of rerun) {
+      const n = this.plan.byId.get(id)!;
+      if (this.statuses.get(id) !== 'passed') this.failedBefore.add(id);
+      this.statuses.delete(id);
+      const s = n.scenario;
+      if (inc(this.remaining.features, s.uri) === 1) this.features.delete(s.uri);
+      if (s.rule && inc(this.remaining.rules, ruleKey(s)) === 1) this.rules.delete(ruleKey(s));
+      for (const gg of this.realGroups(n)) if (inc(this.remaining.groups, gg) === 1) this.groups.delete(gg);
+    }
+    this.opts.bus.emit({ type: 'groupRetrying', group: name, attempt: used + 1, scenarioIds: rerun });
+    this.debug(`group ${name}: attempt ${used + 1}/${g.retry + 1}, re-running ${rerun.length} scenario(s)`);
+    return rerun;
   }
 
   private async runStep(
@@ -457,6 +594,8 @@ export class Executor {
     ctx: StepContext,
     tagNames: string[],
     blocked: boolean,
+    deadline?: number,
+    scenarioTimeoutMs?: number,
   ): Promise<{ status: Status; error?: unknown; skipReason?: string }> {
     const { bus, registry } = this.opts;
     const started = Date.now();
@@ -479,8 +618,6 @@ export class Executor {
         mode?: 'repeat' | 'retry';
       } = {},
     ) => {
-      this.summary.steps[status] += 1;
-      this.summary.steps.total += 1;
       bus.emit({
         type: 'stepFinished',
         scenarioId: scenario.id,
@@ -518,7 +655,13 @@ export class Executor {
     const mode: 'repeat' | 'retry' | undefined = run.repeat !== undefined ? 'repeat' : retries > 0 ? 'retry' : undefined;
     const baseDelay = run.delayMs ?? defRetry.delayMs ?? 0;
     const backoff = run.backoff ?? defRetry.backoff ?? 1;
-    const timeout = run.timeoutMs ?? match.definition.timeoutMs ?? registry.defaultTimeoutMs;
+    const stepTimeout = run.timeoutMs ?? match.definition.timeoutMs ?? registry.defaultTimeoutMs;
+    // A scenario @timeout caps every attempt to the time left.
+    const budget = () => (deadline ? Math.max(1, deadline - Date.now()) : Infinity);
+    const timeoutFor = () => {
+      const left = budget();
+      return !stepTimeout || stepTimeout <= 0 ? (Number.isFinite(left) ? left : 0) : Math.min(stepTimeout, left);
+    };
     const total = mode === 'repeat' ? repeat : retries + 1;
 
     // before-step hooks: once per step (eachAttempt hooks run around every attempt instead)
@@ -555,10 +698,18 @@ export class Executor {
           if (step.argument?.kind === 'docString') {
             args.push(new DocString(substituteIteration(step.argument.content, n, total), step.argument.mediaType));
           }
-          const ret = await withTimeout(`Step "${text}"${mode ? ` (${mode} ${n}/${total})` : ''}`, timeout, () =>
-            withLogger(actx.log, () => m.definition.fn(actx, ...args)),
+          const t = timeoutFor();
+          const scenarioCapped = deadline !== undefined && t < (stepTimeout > 0 ? stepTimeout : Infinity);
+          const ret = await withTimeout(
+            scenarioCapped ? `Scenario "${scenario.name}" (time budget ${scenarioTimeoutMs} ms) at step "${text}"` : `Step "${text}"${mode ? ` (${mode} ${n}/${total})` : ''}`,
+            t,
+            () => withLogger(actx.log, () => m.definition.fn(actx, ...args)),
           );
           if (ret === 'pending') st = 'pending';
+          const soft = actx.soft.failures;
+          if (st === 'passed' && soft.length) {
+            throw new Error(`${soft.length} soft assertion(s) failed:\n${soft.map((f, k) => `  ${k + 1}) ${f.message.split('\n').join('\n     ')}`).join('\n')}`);
+          }
         } catch (e) {
           ({ status: st, skipReason: reason } = classify(e));
           err = e;
@@ -641,6 +792,7 @@ export class Executor {
     const bus = this.opts.bus;
     const actx = Object.create(ctx) as StepContext;
     actx.step = { id: step.id, keyword: step.keyword, text, line: step.line, attempt, of, ...(mode ? { mode } : {}) };
+    actx.soft = createSoftAssert();
     actx.log = createLogger((level, message, data, attachment) =>
       bus.emit({
         type: 'log',
@@ -659,14 +811,27 @@ export class Executor {
 
   private skipScenario(scenario: ScenarioInstance, reason: string, workerId: string): Status {
     this.opts.bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt: 1, workerId });
-    this.finishScenario(scenario, 1, 'skipped', 0, undefined, reason);
+    this.lastStepStatuses.set(scenario.id, []);
+    this.finishScenario(scenario, this.attemptsUsed.get(scenario.id) ?? 1, 'skipped', 0, undefined, reason, {
+      quarantined: 'quarantine' in scenario.meta,
+    });
     return 'skipped';
   }
 
-  private finishScenario(scenario: ScenarioInstance, attempt: number, status: Status, durationMs: number, error?: unknown, reason?: string) {
-    this.statuses.set(scenario.id, status);
-    this.summary.scenarios[status] += 1;
-    this.summary.scenarios.total += 1;
+  private finishScenario(
+    scenario: ScenarioInstance,
+    attempt: number,
+    status: Status,
+    durationMs: number,
+    error?: unknown,
+    reason?: string,
+    extra: { willRetry?: boolean; quarantined?: boolean } = {},
+  ) {
+    const flaky = !extra.willRetry && status === 'passed' && this.failedBefore.has(scenario.id);
+    if (flaky) this.flaky.add(scenario.id);
+    else this.flaky.delete(scenario.id);
+    if (!extra.willRetry) this.statuses.set(scenario.id, status);
+    if (!this.lastStepStatuses.has(scenario.id)) this.lastStepStatuses.set(scenario.id, []);
     this.opts.bus.emit({
       type: 'scenarioFinished',
       scenarioId: scenario.id,
@@ -675,6 +840,9 @@ export class Executor {
       durationMs,
       ...(error !== undefined && status !== 'skipped' ? { error: toErrorInfo(error) } : {}),
       ...(reason ? { reason } : {}),
+      ...(extra.willRetry ? { willRetry: true } : {}),
+      ...(flaky ? { flaky: true } : {}),
+      ...(extra.quarantined ? { quarantined: true } : {}),
     });
   }
 
@@ -836,6 +1004,7 @@ export class Executor {
         attempt,
       },
       state: scope.store,
+      soft: createSoftAssert(),
       groups: Object.freeze({ ...groupStores }),
       export: (key: string, value: unknown) => {
         let copy: unknown;
@@ -898,6 +1067,39 @@ function ruleTags(rule: RuleRef): string[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function createSoftAssert(): SoftAssert {
+  const failures: Error[] = [];
+  const record = (e: unknown): void => {
+    failures.push(e instanceof Error ? e : new Error(String(e)));
+  };
+  return {
+    failures,
+    check(condition, message) {
+      if (!condition) failures.push(new Error(message));
+    },
+    run(fn) {
+      try {
+        const r = fn();
+        if (r && typeof (r as Promise<unknown>).then === 'function') return (r as Promise<unknown>).then(() => undefined, record);
+      } catch (e) {
+        record(e);
+      }
+      return undefined;
+    },
+  };
+}
+
+/** `@timeout:<duration>` on a scenario (feature/rule tags inherited). */
+function scenarioTimeout(s: ScenarioInstance): number | undefined {
+  const v = s.meta['timeout'];
+  if (!v || v === 'true') return undefined;
+  try {
+    return parseDuration(v);
+  } catch {
+    return undefined;
+  }
+}
+
 /** `{{i}}` / `{{iteration}}` = 1-based repetition or attempt number; `{{n}}` / `{{total}}` = how many. */
 export function substituteIteration(text: string, i: number, n: number): string {
   return text.replace(/\{\{\s*(i|iteration|n|total)\s*\}\}/g, (_, k: string) => String(k === 'i' || k === 'iteration' ? i : n));
@@ -939,8 +1141,10 @@ async function runRepeat(
   return first ?? { status: 'passed' };
 }
 
-function inc(m: Map<string, number>, k: string) {
-  m.set(k, (m.get(k) ?? 0) + 1);
+function inc(m: Map<string, number>, k: string): number {
+  const v = (m.get(k) ?? 0) + 1;
+  m.set(k, v);
+  return v;
 }
 
 function dec(m: Map<string, number>, k: string): number {

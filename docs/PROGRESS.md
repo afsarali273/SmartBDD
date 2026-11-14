@@ -2,28 +2,30 @@
 
 The single source of truth for "where are we". Update it at the end of every work session (see CLAUDE.md).
 
-## Current state (2026-11-15, session 3)
+## Current state (2026-11-15, session 4)
 
-- **Phases 0–1:** done. **Phase 2:** data core done; text composite steps, call-a-scenario, Phase 2 gate remain.
-- **Phase 3:** planner, `bddx plan`/`--explain`, dependency closure, in-process scheduler (workers, priorities, locks,
-  serial/parallel/exclusive groups, group caps), group hooks/stores, hard/soft deps, exports, orchestration example. Gate passed.
-  Also: `defaultMode`, `--set` overrides, levelled logging with images, HTML report v1, logs in JUnit/Cucumber JSON,
-  step-level `@repeat`/`@retry` (+ delay/backoff/timeout/concurrency). Remaining: worker processes, `@requires`, timeline view.
-- **Health:** `npm run verify` green on the user's Mac (121 tests + both examples).
+- **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
+- **Phase 3:** done except worker processes, `@requires`, timeline view.
+- **Phase 4:** done: scenario retry (+ filters, analyzer), group retry, flaky, quarantine, rerun-failed + `bddx report`
+  merge, soft assertions, scenario time budget. Plus step-level `@repeat`/`@retry` (done earlier).
+- **Health:** `npm run verify` green on the user's Mac (137 tests + 3 examples: basic, orchestration, resilience).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
+- **Framing (owner):** an automation framework with BDD-style specs, not BDD-purist. Practical features first.
 
 ## Next up
 
-1. **Worker processes** (Phase 3): `runtime/src/workers/` — fork N children (`child_process.fork` of a worker entry in
-   the CLI package), each loads config + support code once; parent keeps the plan + scheduler and sends `runNode`
-   requests `{scenarioId}`; children stream events back over IPC; parent re-emits them. Exports travel with the
-   result. Worker hooks (`BeforeWorker/AfterWorker`) + worker store. Feature/group scopes: decide per-worker vs
-   global (likely: Before/AfterFeature per worker that runs members — document clearly; group hooks in parent?).
-   Write an ADR before coding. Keep `workers` in-process mode as `--pool=threads|inline` default inline.
-2. **Phase 4: retries** (scenario / group / rerun-failed), flaky status, quarantine — design is in ROADMAP. Step retry is done.
-3. Phase 2 leftovers: text composite steps, Phase 2 gate. (Calling scenarios: parked by the owner.)
-4. `@requires:<file.feature>` preconditions.
+1. **Worker processes** (Phase 3 remainder): `runtime/src/workers/`. Parent keeps plan + scheduler; N children
+   (`child_process.fork` of a CLI worker entry) load config + support code once; parent sends `runNode {scenarioId,
+   attempt}`; children stream events over IPC; parent re-emits. Exports travel with results. `BeforeWorker/AfterWorker`
+   + worker store. Decide feature/group hook placement for multi-process (likely: feature hooks per worker that runs
+   members; group hooks in the worker that runs the first member — needs an ADR). Keep in-process as default
+   (`--pool inline|process`).
+2. **Phase 5 (reporting/DX):** HTML v2 (timeline per worker, plan graph via mermaid), history + flakiness trend,
+   Cucumber Messages adapter, debug mode, VS Code extension.
+3. **Phase 6:** plugin API, Playwright integration (browser per scenario, screenshot/trace on failure, steps
+   `concurrent:false`), HTTP step library, Allure, AI step catalogue + MCP server.
+4. Phase 2 leftovers: text composite steps, Phase 2 gate. `@requires:<file>`.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
 Do not start it without the owner.
@@ -141,3 +143,18 @@ Worked directly in the user's folder via device shell.
 - reporters: `attemptsNote`; console/HTML/JUnit show attempts; HTML per-attempt list.
 - example: `examples/basic/features/bulk-and-polling.feature` (100 users ×10 concurrency, polling with retry).
 - conformance: `step-repeat-retry.feature` + 2 vocabulary steps. Tests: +14 (121).
+
+### 2026-11-15: Session 4 (Phase 4: resilience)
+
+- core: events `willRetry/flaky/quarantined` on scenarioFinished, `groupRetrying`, group start/finish `attempt`, summary
+  `flaky/quarantined/retried`; planner `PlanNode.retry/quarantined` (`@retry`, `@noRetry`, `@quarantine`, group
+  `scenarioRetry`), `PlanGroup.retry/retryMembers`; `events-merge.ts` (`parseNdjson`, `finalResults`, `idsToRerun`,
+  `mergeEventStreams`).
+- runtime: `runNode` retry loop, `shouldRetry` (attempts, `retry.on`, analyzer), `settleGroup` (group retry: re-open
+  scopes, requeue), summary from final attempts, soft assertions (`ctx.soft`), scenario time budget; scheduler retry-group
+  settling; `setRetryAnalyzer`, `RetryOptions`.
+- cli: config `retry`, `scenarioTimeout`; `-r/--retry`, `--fail-on-flaky`, `--rerun-failed <file>`; `bddx report`.
+- reporters: console retry/flaky/quarantine display; JUnit `<flakyFailure>` + quarantined → skipped; HTML badges,
+  earlier attempts, group retries, trimmed stack traces.
+- examples/resilience (+ `npm run example:resilience`, in `verify`); fixture `rerun-project`; conformance
+  `scenario-retry.feature` (+1 vocabulary step). Tests now 137.

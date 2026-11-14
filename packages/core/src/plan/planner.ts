@@ -51,7 +51,10 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
   });
 
   // --- per-scenario facts from tags
-  const info = new Map<ScenarioInstance, { groups: string[]; deps: RawDep[]; locks: string[]; priority?: number; exclusive: boolean }>();
+  const info = new Map<
+    ScenarioInstance,
+    { groups: string[]; deps: RawDep[]; locks: string[]; priority?: number; exclusive: boolean; retry?: number; quarantined: boolean }
+  >();
   const factsOf = (s: ScenarioInstance) => {
     let f = info.get(s);
     if (f) return f;
@@ -61,7 +64,23 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
     const locks: string[] = [];
     let priority: number | undefined;
     let exclusive = false;
+    let retry: number | undefined;
+    let quarantined = false;
     for (const t of s.tags) {
+      if (t.key === 'retry') {
+        const n = Number(t.value);
+        if (!Number.isInteger(n) || n < 0) err(`@retry:${t.value ?? ''} on a scenario needs a whole number >= 0`, s);
+        else retry = n;
+        continue;
+      }
+      if (t.key === 'noRetry') {
+        retry = 0;
+        continue;
+      }
+      if (t.key === 'quarantine') {
+        quarantined = true;
+        continue;
+      }
       if (t.key === 'group' && t.value) groups.push(t.value);
       else if (t.key === 'dependsOn' && t.value) deps.push(parseDependsOn(t.value));
       else if (t.key === 'lock' && t.value) locks.push(t.value);
@@ -72,7 +91,15 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
       } else if (t.key === 'exclusive') exclusive = true;
     }
     for (const m of matchers) if (m.pred(tagNames)) groups.push(m.name);
-    f = { groups: [...new Set(groups)], deps, locks: [...new Set(locks)], exclusive, ...(priority !== undefined ? { priority } : {}) };
+    f = {
+      groups: [...new Set(groups)],
+      deps,
+      locks: [...new Set(locks)],
+      exclusive,
+      quarantined,
+      ...(priority !== undefined ? { priority } : {}),
+      ...(retry !== undefined ? { retry } : {}),
+    };
     info.set(s, f);
     return f;
   };
@@ -152,6 +179,8 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
         priority: c.priority ?? 0,
         locks: [...(c.locks ?? [])],
         members: [],
+        retry: c.retry ?? 0,
+        retryMembers: c.retryMembers ?? 'all',
         configured: name in configs,
         ...(name === DEFAULT && !(name in configs) ? { implicit: true } : {}),
         ...(c.workers !== undefined ? { workers: c.workers } : {}),
@@ -166,6 +195,10 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
     if (c.workers !== undefined && (!Number.isInteger(c.workers) || c.workers < 1)) {
       errors.push({ message: `groups.${name}.workers must be a positive integer` });
     }
+    for (const k of ['retry', 'scenarioRetry'] as const) {
+      const v = c[k];
+      if (v !== undefined && (!Number.isInteger(v) || v < 0)) errors.push({ message: `groups.${name}.${k} must be a whole number >= 0` });
+    }
   }
 
   // --- nodes
@@ -177,7 +210,11 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
     const groupPriorities = f.groups.map((g) => configs[g]?.priority).filter((p): p is number => p !== undefined);
     const groupLocks = f.groups.flatMap((g) => configs[g]?.locks ?? []);
     const pulledInBy = included.get(s.id);
+    const groupRetries = f.groups.map((g) => configs[g]?.scenarioRetry).filter((r): r is number => r !== undefined);
+    const retry = f.retry ?? (groupRetries.length ? Math.max(...groupRetries) : undefined);
     return {
+      quarantined: f.quarantined,
+      ...(retry !== undefined ? { retry } : {}),
       id: s.id,
       scenario: s,
       groups: f.groups,

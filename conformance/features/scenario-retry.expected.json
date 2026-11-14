@@ -1,0 +1,9 @@
+{
+  "scenarios": {
+    "scenario-retry.feature::retried-until-it-passes": "passed",
+    "scenario-retry.feature::retries-exhausted": "failed",
+    "scenario-retry.feature::quarantined-failure": "failed"
+  },
+  "trace": ["scenario attempt 1", "scenario attempt 2", "scenario attempt 1", "scenario attempt 2"],
+  "success": false
+}

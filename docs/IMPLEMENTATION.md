@@ -250,6 +250,37 @@ once. Each attempt runs `eachAttempt` step hooks around the body, uses its own c
   "(1 step retried)" on the scenario line; HTML lists every attempt (status, text, duration, error) and tags logs `#n`;
   JUnit failure messages add the attempt info.
 
+## 2c-ter. Resilience (Phase 4)
+
+| Feature | How | Where |
+| --- | --- | --- |
+| Scenario retry | `@retry:N` / `@noRetry` on a scenario (planner → `PlanNode.retry`), group `scenarioRetry`, config `retry.scenario`, CLI `-r/--retry` | `Executor.runNode` loop + `shouldRetry` |
+| Retry filters | config `retry.on` (error name exact / message substring / "/regex/"), `setRetryAnalyzer(fn)` (TestNG IRetryAnalyzer style) | `shouldRetry` |
+| Group retry | `groups.x.retry: N`, `retryMembers: 'all' \| 'failed'` | scheduler `settleGroup` callback + `Executor.settleGroup` |
+| Flaky | final pass after any non-passed attempt (scenario retry, group retry, or merged rerun) → `scenarioFinished.flaky`, `summary.flaky`; `--fail-on-flaky` / `retry.failOnFlaky` fails the run | `finishScenario`, `mergeEventStreams` |
+| Quarantine | `@quarantine`: runs and reports, excluded from the success decision and fail-fast | planner `quarantined`, executor summary |
+| Rerun failed | `--rerun-failed <events.ndjson>`: selects ids whose final status was not `passed` (`idsToRerun`), dependencies pulled in | `prepareRun` |
+| Merge reports | `bddx report a.ndjson b.ndjson -f html:… -f junit:…`: later streams win per scenario, recovered = flaky, summary recomputed | `core/src/events-merge.ts`, `reportFromEvents` |
+| Soft assertions | `ctx.soft.check(cond, msg)`, `ctx.soft.run(fn)`; the step fails at its end with all failures | `createSoftAssert`, `attemptOnce` |
+| Scenario time budget | `@timeout:<dur>` on a scenario / config `scenarioTimeout`; each step's timeout is capped to the time left; after the deadline remaining steps are skipped | `runScenario`, `runStep` |
+
+**Scenario retry semantics.** Each attempt is a full scenario run: fresh scenario store and DI instances, Background,
+Before/After hooks, exports reset (dependents only ever see the final attempt's exports). Only `failed` is retried
+(not pending/undefined/ambiguous/skipped). `scenarioFinished` is emitted per attempt; non-final ones carry
+`willRetry: true`. The run summary is computed at the END from final attempts (`lastStepStatuses`, `statuses`), so
+retried attempts are never double-counted.
+
+**Group retry semantics.** When every member of a retry group has a result, the scheduler calls `settleGroup`. If a member
+did not pass and attempts remain, the executor re-opens the group (BeforeGroup/AfterGroup run again) and the feature/
+rule scopes of the re-run members, bumps their attempt numbers, emits `groupRetrying`, and the scheduler re-queues them.
+Dependents of a retry group's members (outside that group) wait until the group SETTLES. Members' own scenario retries
+happen first, inside each member run.
+
+**Reporters.** Console: `↻ … retrying`, `flaky (passed on attempt n)`, `[quarantined]`, a "Quarantined failures" section,
+summary extras; group-retried failures are removed from "Failures". JUnit: Surefire `<flakyFailure>` per earlier failed
+attempt; quarantined failures become `<skipped message="quarantined: …">`. HTML: flaky/quarantined/attempt badges,
+earlier attempts list, group retries in the Run section, stack traces trimmed to user frames (`trimStack`).
+
 ## 2d. Configuration sources and precedence
 
 Lowest → highest: built-in defaults → `bddx.config.*` → `--profile <p>` (merged; tags ANDed, params/groups merged by

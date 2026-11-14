@@ -15,6 +15,7 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
   const suiteName = String(raw['suiteName'] ?? 'bddx');
   const plan: PlannedScenario[] = [];
   const results = new Map<string, ScenarioFinished>();
+  const earlier = new Map<string, ScenarioFinished[]>(); // failed attempts that were retried
   const failingStep = new Map<string, StepFinished>();
   const logs = new LogIndex((raw['logLevel'] as ReportLogLevel | undefined) ?? 'info');
   let xml = '';
@@ -26,9 +27,17 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
       if (e.type === 'stepFinished' && e.status !== 'passed' && e.status !== 'skipped' && !failingStep.has(e.scenarioId)) {
         failingStep.set(e.scenarioId, e);
       }
-      if (e.type === 'scenarioFinished') results.set(e.scenarioId, e);
+      if (e.type === 'scenarioStarted' && !results.has(e.scenarioId)) failingStep.delete(e.scenarioId); // new attempt
+      if (e.type === 'scenarioFinished') {
+        const previous = results.get(e.scenarioId); // set again = group retry re-ran it
+        if (previous && previous.status !== 'passed') earlier.set(e.scenarioId, [...(earlier.get(e.scenarioId) ?? []), previous]);
+        if (e.willRetry) {
+          earlier.set(e.scenarioId, [...(earlier.get(e.scenarioId) ?? []), e]);
+          failingStep.delete(e.scenarioId);
+        } else results.set(e.scenarioId, e);
+      }
       if (e.type === 'log') logs.add(e);
-      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs, logs);
+      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs, logs, earlier);
     },
     async close() {
       if (!xml) return;
@@ -45,6 +54,7 @@ export function render(
   failingStep: Map<string, StepFinished>,
   durationMs: number,
   logs: LogIndex = new LogIndex('silent'),
+  earlier: Map<string, ScenarioFinished[]> = new Map(),
 ): string {
   const byFeature = new Map<string, PlannedScenario[]>();
   for (const s of plan) {
@@ -66,7 +76,10 @@ export function render(
       const time = (r?.durationMs ?? 0) / 1000;
       sTime += time;
       let body = '';
-      if (status === 'failed' || status === 'undefined' || status === 'ambiguous') {
+      if (r?.quarantined && status !== 'passed' && status !== 'skipped') {
+        sSkip++;
+        body = `\n      <skipped message="${esc(`quarantined: ${firstLine(r.error?.message ?? status)}`)}"/>\n    `;
+      } else if (status === 'failed' || status === 'undefined' || status === 'ambiguous') {
         sFail++;
         const step = failingStep.get(s.id);
         const err: ErrorInfo | undefined = r?.error ?? step?.error;
@@ -77,6 +90,16 @@ export function render(
       } else if (status === 'skipped' || status === 'pending') {
         sSkip++;
         body = `\n      <skipped message="${esc(r?.reason ?? status)}"/>\n    `;
+      }
+      // Surefire-style flaky markers (Jenkins JUnit plugin shows them): one per failed attempt before the pass.
+      if (status === 'passed' && earlier.get(s.id)?.length) {
+        body =
+          '\n' +
+          earlier
+            .get(s.id)!
+            .map((a) => `      <flakyFailure type="failed" message="${esc(firstLine(a.error?.message ?? 'failed'))}">${esc(a.error?.stack ?? a.error?.message ?? '')}</flakyFailure>\n`)
+            .join('') +
+          '    ';
       }
       const stepText = new Map(s.steps.map((st) => [st.id, `${st.keyword}${st.text}`]));
       const lines = (levels: string[]) =>

@@ -144,3 +144,16 @@ A pass after retries is a pass (attempts recorded, not a failure). `{{i}}`/`{{n}
 `@concurrency` is opt-in and only for steps safe to run in parallel with themselves (API/data); browser- or
 Selenium-driving steps must declare `{ concurrent: false }`, which turns `@concurrency` into an error. Calling scenarios
 was discussed and parked by the owner (bddx is an automation framework with BDD-style specs, not BDD-purist).
+
+## ADR-020 Resilience model (2026-11-15)
+
+- **Retry unit = full scenario attempt** (fresh state, hooks, Background); dependents see only the final attempt; summary is
+  computed from final attempts at the end of the run.
+- **Group retry** is decided by the scheduler/executor once all members finished (`settleGroup`), re-running all or only
+  failed members with group hooks; outside dependents wait for the group to settle. This gives "retry the setup group as a
+  unit" (TestNG-style) without blocking worker slots.
+- **Flaky** = pass after any failure (scenario retry, group retry, merged rerun); reported, not failing unless
+  `failOnFlaky`. **Quarantine** keeps known-broken tests visible without breaking CI; JUnit maps quarantined failures to
+  `<skipped>` so CI dashboards stay green, and flaky passes to Surefire `<flakyFailure>`.
+- **Rerun + merge** works from NDJSON events (no hidden state files), so it composes with CI artifacts and with the future
+  Java engine (same schema).

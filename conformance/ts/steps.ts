@@ -22,6 +22,10 @@ export function registerConformanceSteps(r: SupportRegistry, trace: string[]): v
     trace.push(`attempt ${ctx.step!.attempt}`);
     if (ctx.step!.attempt < n) throw new Error(`attempt ${ctx.step!.attempt} < ${n}`);
   });
+  r.defineStep('a step that passes on scenario attempt {int}', (ctx: StepContext, n: number) => {
+    trace.push(`scenario attempt ${ctx.scenario.attempt}`);
+    if (ctx.scenario.attempt < n) throw new Error(`scenario attempt ${ctx.scenario.attempt} < ${n}`);
+  });
   r.defineStep('a step that fails on repetition {int}', (ctx: StepContext, n: number) => {
     trace.push(`repetition ${ctx.step!.attempt}`);
     if (ctx.step!.attempt === n) throw new Error(`repetition ${n} fails`);

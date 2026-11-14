@@ -15,6 +15,8 @@ const built = existsSync(bin);
 
 const dataProject = fileURLToPath(new URL('./fixtures/data-project/', import.meta.url));
 const orchestration = fileURLToPath(new URL('../../../examples/orchestration/', import.meta.url));
+const resilience = fileURLToPath(new URL('../../../examples/resilience/', import.meta.url));
+const rerunProject = fileURLToPath(new URL('./fixtures/rerun-project/', import.meta.url));
 
 function bddx(...args: string[]) {
   return bddxIn(project, ...args);
@@ -146,11 +148,45 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(r.out).toContain('9 scenarios (9 passed)');
   });
 
+  it('resilience example: retries, group retry, quarantine, soft asserts all green; flaky reported', () => {
+    const r = bddxIn(resilience);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('↻ Pay through a flaky API attempt 1 failed: payment API returned 503 — retrying');
+    expect(r.out).toContain('flaky (passed on attempt 2)');
+    expect(r.out).toContain('↻ group warmup: attempt 2, re-running 1 scenario(s)');
+    expect(r.out).toContain('[quarantined]');
+    expect(r.out).toContain('Quarantined failures (do not fail the run):');
+    expect(r.out).toMatch(/6 scenarios \(5 passed, 1 failed\) · 2 flaky, 2 retried, 1 quarantined/);
+    expect(bddxIn(resilience, '--fail-on-flaky').code).toBe(1);
+    const junit = readFileSync(join(resilience, 'reports/junit.xml'), 'utf8');
+    expect(junit).toContain('<flakyFailure type="failed" message="payment API returned 503">');
+    expect(junit).toContain('<skipped message="quarantined: BUG-123: float rounding in totals"/>');
+  });
+
+  it('--retry, --rerun-failed and bddx report merge runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-rerun-'));
+    const first = bddxIn(rerunProject, '-f', `ndjson:${join(dir, 'run1.ndjson')}`);
+    expect(first.code).toBe(1);
+    expect(first.out).toContain('3 scenarios (1 passed, 1 failed, 1 skipped)');
+    expect(bddxIn(rerunProject, '--retry', '2').out).toContain('↻ depends on the environment attempt 2 failed');
+    const second = bddxIn(rerunProject, '--rerun-failed', join(dir, 'run1.ndjson'), '-D', 'backend=up', '-f', `ndjson:${join(dir, 'run2.ndjson')}`);
+    expect(second.code).toBe(0);
+    expect(second.out).toContain('2 scenarios (2 passed)'); // only what did not pass
+    const nothing = bddxIn(rerunProject, '--rerun-failed', join(dir, 'run2.ndjson'));
+    expect(nothing.out).toContain('Nothing to rerun');
+    const merged = bddxIn(rerunProject, 'report', join(dir, 'run1.ndjson'), join(dir, 'run2.ndjson'), '-f', `html:${join(dir, 'merged.html')}`, '-f', 'console');
+    expect(merged.code).toBe(0);
+    expect(merged.out).toContain('3 scenarios (3 passed) · 2 flaky');
+    expect(readFileSync(join(dir, 'merged.html'), 'utf8')).toContain('PASSED');
+  });
+
   it('usage errors exit 2', () => {
     expect(bddx('--profile', 'nope').code).toBe(2);
     expect(bddx('--bogus').code).toBe(2);
     expect(bddx('-t', '@a and').code).toBe(2);
     expect(bddx('-w', '0').code).toBe(2);
+    expect(bddx('--retry', 'x').code).toBe(2);
+    expect(bddx('report').code).toBe(2);
   });
 });
 
