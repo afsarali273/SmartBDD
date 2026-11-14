@@ -1,0 +1,13 @@
+{
+  "config": { "workers": 1 },
+  "scenarios": {
+    "setup": "passed",
+    "broken": "failed",
+    "dependencies.feature::needs-setup": "passed",
+    "dependencies.feature::needs-broken": "skipped",
+    "dependencies.feature::soft-on-broken": "passed",
+    "dependencies.feature::urgent": "passed"
+  },
+  "trace": ["urgent", "setup", "needs setup", "soft ran"],
+  "success": false
+}

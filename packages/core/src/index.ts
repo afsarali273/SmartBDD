@@ -10,3 +10,4 @@ export * from './selection.js';
 
 export const BDDX_VERSION = '0.1.0';
 export * from './data/index.js';
+export * from './plan/index.js';

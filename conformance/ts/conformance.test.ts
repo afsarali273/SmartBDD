@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EventBus, createFileDataLoader, parseSpecAsync, type Status } from '@bddx/core';
+import { EventBus, buildPlan, createFileDataLoader, parseSpecAsync, type PlanOptions, type Status } from '@bddx/core';
 import { Executor, SupportRegistry } from '@bddx/runtime';
 import { registerConformanceSteps } from './steps.js';
 
@@ -11,6 +11,8 @@ const dir = fileURLToPath(new URL('../features/', import.meta.url));
 const dataLoader = createFileDataLoader({ dataDir: fileURLToPath(new URL('../data/', import.meta.url)), rootDir: dir });
 
 interface Expected {
+  /** Plan options (workers, groups). Default: workers 1, groups from tags only. */
+  config?: PlanOptions;
   scenarios?: Record<string, Status>;
   steps?: Record<string, Status[]>;
   trace?: string[];
@@ -32,7 +34,9 @@ describe('conformance', () => {
       const registry = new SupportRegistry();
       registerConformanceSteps(registry, trace);
       const bus = new EventBus({ keepHistory: true });
-      const result = await new Executor({ registry, bus }).execute(spec.scenarios);
+      const plan = buildPlan(spec.scenarios, spec.scenarios, { workers: 1, ...(expected.config ?? {}) });
+      expect(plan.errors).toEqual([]);
+      const result = await new Executor({ registry, bus, plan }).execute(spec.scenarios);
 
       if (expected.scenarios) expect(Object.fromEntries(result.scenarioStatuses)).toEqual(expected.scenarios);
       if (expected.steps) {

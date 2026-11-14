@@ -14,6 +14,7 @@ const project = fileURLToPath(new URL('./fixtures/project/', import.meta.url));
 const built = existsSync(bin);
 
 const dataProject = fileURLToPath(new URL('./fixtures/data-project/', import.meta.url));
+const orchestration = fileURLToPath(new URL('../../../examples/orchestration/', import.meta.url));
 
 function bddx(...args: string[]) {
   return bddxIn(project, ...args);
@@ -93,9 +94,38 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(list.out).toContain('features/accounts.feature::user-has-a-balance[accounts.csv#2]');
   });
 
+  it('plan prints groups and dependencies; --explain and mermaid/json formats work', () => {
+    const text = bddxIn(orchestration, 'plan');
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('group checkout: parallel x3, 4 member(s), after setup');
+    expect(bddxIn(orchestration, 'plan', '--explain', 'login').out).toContain('needed by:');
+    expect(bddxIn(orchestration, 'plan', '--plan-format', 'mermaid').out).toMatch(/^flowchart LR/);
+    const json = JSON.parse(bddxIn(orchestration, 'plan', '--plan-format', 'json').out) as { nodes: unknown[]; workers: number };
+    expect(json.workers).toBe(4);
+    expect(json.nodes).toHaveLength(9);
+  });
+
+  it('selecting one scenario pulls in its dependencies unless --no-deps', () => {
+    const r = bddxIn(orchestration, 'run', '--name', 'Buy fig', '-w', '2');
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('✔ Create a test user');
+    expect(r.out).toContain('✔ Log in');
+    expect(r.out).toContain('3 scenarios (3 passed)');
+    const alone = bddxIn(orchestration, 'run', '--name', 'Buy fig', '--no-deps');
+    expect(alone.code).toBe(1); // ctx.from('login') fails: login is not in the plan
+    expect(alone.out).toContain('no scenario with this id in the plan');
+  });
+
+  it('runs the orchestration example green with 4 workers', () => {
+    const r = bddxIn(orchestration);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('9 scenarios (9 passed)');
+  });
+
   it('usage errors exit 2', () => {
     expect(bddx('--profile', 'nope').code).toBe(2);
     expect(bddx('--bogus').code).toBe(2);
     expect(bddx('-t', '@a and').code).toBe(2);
+    expect(bddx('-w', '0').code).toBe(2);
   });
 });

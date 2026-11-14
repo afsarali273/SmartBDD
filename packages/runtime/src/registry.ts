@@ -4,6 +4,7 @@ import { compileTagExpression, createIdGenerator, type HookKind, type HookLevel,
 import type {
   AnyHookFn,
   FeatureHookFn,
+  GroupHookFn,
   HookDefinition,
   HookOptions,
   RunHookFn,
@@ -68,6 +69,7 @@ export class SupportRegistry {
   }
 
   defineHook(level: 'run', kind: HookKind, options: HookOptions, fn: RunHookFn, location?: string): HookDefinition;
+  defineHook(level: 'group', kind: HookKind, options: HookOptions, fn: GroupHookFn, location?: string): HookDefinition;
   defineHook(level: 'feature' | 'rule', kind: HookKind, options: HookOptions, fn: FeatureHookFn, location?: string): HookDefinition;
   defineHook(level: 'scenario' | 'step', kind: HookKind, options: HookOptions, fn: ScenarioHookFn, location?: string): HookDefinition;
   defineHook(level: HookLevel, kind: HookKind, options: HookOptions, fn: AnyHookFn, location?: string): HookDefinition;

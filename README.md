@@ -4,7 +4,7 @@ A BDD automation framework that keeps Gherkin's readability and adds TestNG-styl
 groups, dependencies, mixed parallel/serial execution and layered retries.
 TypeScript first, Java next. ("bddx" is a working name.)
 
-> **Status:** Phases 0–1 complete; Phase 2 (data-driven) core done. See [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Status:** Phases 0–1 complete; Phase 2 data core and Phase 3 orchestration (in-process) done. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Quick start
 
@@ -80,6 +80,34 @@ Scenario Outline: credit limit for <who>
     | who | limit |
 ```
 
+Orchestration: groups, dependencies, locks, priorities, parallel workers:
+
+```gherkin
+@id:login @group:setup
+Scenario: Log in
+  When I log in as "ann"            # ctx.export('token', …)
+
+@checkout @dependsOn:login
+Scenario Outline: Buy <product>     # ctx.from('login').get('token')
+  ...
+
+@lock:payments-db @priority:1
+Scenario: Card payment
+```
+
+```ts
+export default defineConfig({
+  workers: 4,
+  groups: {
+    setup:    { mode: 'serial', priority: -10 },
+    checkout: { mode: 'parallel', workers: 3, dependsOn: ['setup'], match: '@checkout' },
+    reports:  { dependsOn: ['checkout'], onDependencyFailure: 'run' },
+  },
+});
+```
+
+`bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
+
 ```ts
 // bddx.config.ts
 import { defineConfig } from '@bddx/cli';
@@ -97,6 +125,8 @@ export default defineConfig({
 bddx [run] [paths...]  -t "@smoke and not @wip"  -p ci  -D env=qa  -f ndjson:reports/e.ndjson  --dry-run
 bddx list  [paths...]  # ids + tags of selected scenarios
 bddx snippets         # code for every undefined step
+bddx plan [--explain <id>] [--plan-format text|json|mermaid]   # execution graph, runs nothing
+bddx run -w 4 --no-deps   # 4 parallel workers; do not pull in dependencies
 ```
 
 Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.

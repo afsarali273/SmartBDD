@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BDDX_VERSION, parseSpecFile, selectScenarios } from '@bddx/core';
+import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
-import { discoverSpecs, makeDataLoader, registerTypeScriptLoader, runBddx } from './run.js';
+import { discoverSpecs, makeDataLoader, prepareRun, registerTypeScriptLoader, runBddx } from './run.js';
 import type { Reporter } from '@bddx/reporters';
 
 const HELP = `bddx ${BDDX_VERSION}
@@ -12,6 +12,8 @@ Usage:
   bddx [run] [paths...] [options]    Run scenarios (paths may be files, folders, globs, file:line)
   bddx list  [paths...] [options]    List selected scenarios with ids and tags, without running
   bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
+  bddx plan  [paths...] [options]    Show the execution plan: groups, dependencies, locks (runs nothing)
+             --plan-format text|json|mermaid    --explain <scenario id>
 
 Options:
   -c, --config <file>     Config file (default: bddx.config.{ts,mts,js,mjs,json} in cwd)
@@ -24,6 +26,8 @@ Options:
       --fail-fast         Stop after the first failed scenario
       --no-strict         Pending/undefined steps do not fail the run
       --timeout <ms>      Default step/hook timeout
+  -w, --workers <n>       Max scenarios running at once (default 1)
+      --no-deps           Do not pull in dependencies of selected scenarios
   -h, --help              Show help
   -v, --version           Show version
 
@@ -32,7 +36,8 @@ Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.
 
 export async function main(argv: string[]): Promise<number> {
   const noStrict = argv.includes('--no-strict');
-  const args = argv.filter((a) => a !== '--no-strict');
+  const noDeps = argv.includes('--no-deps');
+  const args = argv.filter((a) => a !== '--no-strict' && a !== '--no-deps');
   let parsed;
   try {
     parsed = parseArgs({
@@ -48,6 +53,9 @@ export async function main(argv: string[]): Promise<number> {
         'dry-run': { type: 'boolean' },
         'fail-fast': { type: 'boolean' },
         timeout: { type: 'string' },
+        workers: { type: 'string', short: 'w' },
+        'plan-format': { type: 'string' },
+        explain: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
@@ -68,8 +76,8 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (positionals[0] === 'run' || positionals[0] === 'list' || positionals[0] === 'snippets') {
-    command = positionals[0];
+  if (['run', 'list', 'snippets', 'plan'].includes(positionals[0] ?? '')) {
+    command = positionals[0]!;
     paths = positionals.slice(1);
   }
 
@@ -83,6 +91,28 @@ export async function main(argv: string[]): Promise<number> {
 
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
+    const workers = values.workers !== undefined ? Number(values.workers) : undefined;
+    if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) throw new UsageError(`--workers expects a positive integer, got "${values.workers}"`);
+    if (command === 'plan') {
+      const { plan } = await prepareRun({
+        ...(values.config ? { config: values.config } : {}),
+        ...(values.profile ? { profile: values.profile } : {}),
+        ...(paths.length ? { paths } : {}),
+        ...(values.tags ? { tags: values.tags } : {}),
+        ...(values.name ? { name: values.name } : {}),
+        ...(workers ? { workers } : {}),
+        ...(noDeps ? { withDeps: false } : {}),
+      });
+      if (values.explain) process.stdout.write(`${explainNode(plan, values.explain)}\n`);
+      else {
+        const fmt = values['plan-format'] ?? 'text';
+        if (fmt === 'json') process.stdout.write(`${JSON.stringify(planToJSON(plan), null, 2)}\n`);
+        else if (fmt === 'mermaid') process.stdout.write(renderPlanMermaid(plan));
+        else if (fmt === 'text') process.stdout.write(renderPlanText(plan));
+        else throw new UsageError(`--plan-format must be text, json or mermaid (got "${fmt}")`);
+      }
+      return plan.errors.length ? 2 : 0;
+    }
 
     const outcome = await runBddx({
       ...(values.config ? { config: values.config } : {}),
@@ -96,6 +126,8 @@ export async function main(argv: string[]): Promise<number> {
       ...(values['fail-fast'] ? { failFast: true } : {}),
       ...(noStrict ? { strict: false } : {}),
       ...(values.timeout ? { stepTimeoutMs: Number(values.timeout) } : {}),
+      ...(workers ? { workers } : {}),
+      ...(noDeps ? { withDeps: false } : {}),
     });
     return outcome.exitCode;
   } catch (err) {

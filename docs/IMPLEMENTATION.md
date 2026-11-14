@@ -3,17 +3,15 @@
 How bddx works today, module by module. Keep this in sync with the code; it is the first thing a new
 contributor (human or AI) reads after PROGRESS.md.
 
-Last updated: 2026-11-15 (Phases 0–1 done, Phase 2 data-driven core done).
+Last updated: 2026-11-15 (Phases 0–1 done, Phase 2 data core done, Phase 3 planner + in-process scheduler done).
 
 ## 1. Big picture
 
 ```
- .feature / .feature.md ──► core.parseSpec ──► ScenarioInstance[] ──► core.selectScenarios
+ specs ──► SpecParser ──► ScenarioInstance[] ──► selectScenarios ──► buildPlan (groups, deps, locks)
                                                                           │
- steps/*.ts ──(import)──► runtime global API ──► SupportRegistry          │
-                                                        │                 ▼
-                                                        └──────► runtime.Executor ──► EventBus ──► reporters
-                                                                                          (console, ndjson, junit)
+ steps/*.ts ──(import)──► global API ──► SupportRegistry                  ▼
+                                               └────────► Executor ◄── schedule(plan) ──► EventBus ──► reporters
 ```
 
 - **Everything becomes `ScenarioInstance`s first.** One instance = one executable test (an outline row is
@@ -21,9 +19,9 @@ Last updated: 2026-11-15 (Phases 0–1 done, Phase 2 data-driven core done).
 - **Everything observable is an event.** Reporters never look at runtime internals.
 - **The CLI is a thin shell** around `runBddx()` (packages/cli/src/run.ts), which is also the programmatic API.
 
-Phase 3 inserts a **Planner** between selection and execution (a graph of groups, dependencies, locks) and
-a **Scheduler** that hands ready instances to worker processes. `Executor.runScenario()` is the unit
-those workers will call, so keep it free of global state.
+The **Planner** (`core/src/plan`) turns the selection into a validated graph; the **Scheduler**
+(`runtime/src/scheduler.ts`) decides what runs when; the **Executor** runs nodes and owns scopes/hooks/events.
+`Executor.runScenario()` is the unit future worker processes will call, so keep it free of global state.
 
 ## 2. Own core, swappable third-party parts (ports & adapters)
 
@@ -143,6 +141,8 @@ Hooks can be functions, instance methods of `@Steps()` classes (scenario/step le
 | Event | Effect |
 | --- | --- |
 | BeforeAll fails | every scenario skipped with reason; AfterAll still runs; run fails |
+| BeforeGroup fails | that group's scenarios skipped with reason; AfterGroup still runs; run fails |
+| hard dependency did not pass | scenario skipped `dependency failed: <id> (<status>)` (cascades); soft deps run anyway |
 | BeforeFeature fails | that feature's scenarios skipped with reason; AfterFeature still runs; run fails |
 | BeforeRule fails | the rule's scenarios skipped with reason; AfterRule still runs; run fails |
 | Before (scenario) fails | later before-hooks skipped unless `alwaysRun`; steps skipped; After hooks run; scenario failed |
@@ -190,14 +190,49 @@ close reporters → exit code.
 Path rules: config globs are relative to the config file's folder (rootDir). CLI positional paths are relative to
 the shell's cwd and converted to rootDir-relative URIs.
 
+## 2c. Orchestration (Phase 3)
+
+**Vocabulary.** Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id>[:soft]`, `@dependsOn:group:<name>[:soft]`,
+`@lock:<name>`, `@priority:<n>` (lower first), `@exclusive`. Config `groups.<name>`: `mode` (parallel | serial |
+exclusive), `workers`, `dependsOn`, `onDependencyFailure` ('skip' | 'run'), `priority`, `locks`, `match` (tag
+expression). Config/CLI `workers` (default 1). Full reference: `core/src/plan/types.ts` header.
+
+**Planner** (`buildPlan(all, selected, options)`, pure):
+1. Facts per scenario from tags (+ `match` groups). Dependency targets: exact id, or an id "family" (`rows` matches
+   `rows[1]`, `rows[2]`, data rows `x[file#n]`).
+2. Closure: hard deps of selected scenarios (and members of groups their groups depend on, unless soft) are pulled in,
+   with `pulledInBy`. CLI parses ALL configured specs so targets in other files resolve.
+3. Nodes in base order (features together, file order). Priority: `@priority` > min(group priority) > 0. Locks: own +
+   group locks. Exclusive: `@exclusive` or group mode exclusive.
+4. Deps resolved to node ids (hard wins over soft for duplicates); group `dependsOn` adds deps on every member.
+5. Validation errors (never throws): unknown target/group, bad priority, bad workers, cycles (`a -> c -> b -> a`).
+   The CLI exits 2 on plan errors; `Executor` throws for an invalid plan passed programmatically.
+
+**Scheduler** (`schedule(plan, callbacks)`): loop { skip ready nodes whose HARD dep did not pass (cascades) or when a
+stop reason exists (fail-fast, BeforeAll failure) → start ready nodes by (priority, order) while a slot is free and
+locks/group caps/exclusivity allow → await any running }. Slots are named `w1..wN` (= `workerId` in events). Dry run
+ignores dependency results. Safety net: if nothing runs and nothing can start, the rest is skipped (never hangs).
+
+**Scopes under any order/concurrency**: feature, rule and group scopes OPEN lazily when their first scenario starts
+(Before* hooks, memoised promise so concurrent members wait for the same hooks) and CLOSE when their last member
+finishes or is skipped (reference counts). Close order when several end together: rule → feature → groups (group is
+the outer scope). A scope never opened (all members skipped before starting) runs no hooks and emits no events.
+
+**Exports**: `ctx.export(key, value)` stores a structured clone per scenario; `ctx.from(id).get(key)` returns a clone,
+and throws if that scenario has not finished (hint: add `@dependsOn`) or is not in the plan.
+
 ## 3. Event stream (schema v1)
 
 Order for a normal run:
 
 ```
-runStarted → specParsed* → planReady → (featureStarted → (hookStarted/hookFinished)* →
-  (scenarioStarted → hook* → (stepStarted → hook* → stepFinished)* → hook* → scenarioFinished)* →
-  featureFinished)* → runFinished
+runStarted → specParsed* → planReady → … → runFinished
+
+In between, with workers = 1 and no priorities, the order is as in Phase 1:
+  (featureStarted → hook* → (scenarioStarted → hook* → (stepStarted → hook* → stepFinished)* → hook* →
+  scenarioFinished)* → featureFinished)*
+With workers > 1, events of different scenarios interleave; every scenario/step event carries `scenarioId`, and
+`scenarioStarted.workerId` names the slot. `groupStarted`/`groupFinished` wrap each named group's members.
 ```
 
 `log` and `attachment` can appear anywhere inside a scenario. Skipped-by-hook scenarios emit

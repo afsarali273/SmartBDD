@@ -51,7 +51,7 @@ file is self-contained.
 - [x] Cucumber libraries isolated in `adapters/` (only files allowed to import them); spec parser registry by suffix
 - [x] TestNG-style hook names (`BeforeSuite`/`AfterSuite`) and hook decorators on static methods at every level
 
-## Phase 3: Orchestration (the differentiator)
+## Phase 3: Orchestration (the differentiator) — in progress
 
 Proposed config:
 
@@ -66,18 +66,21 @@ groups: {
 
 Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<name>`, `@priority:<n>`, `@requires:<file.feature>`, `@exclusive`.
 
-- [ ] Planner: build a DAG of instances and groups; validate (cycles, unknown ids, impossible locks) with readable errors
-- [ ] `bddx plan` command: print the graph (text + JSON + mermaid)
-- [ ] `--explain <id>`: why it runs / waits / is skipped
-- [ ] `--with-deps` (default on): selecting a scenario pulls in its dependencies
-- [ ] Scheduler: ready-queue by priority, honours group mode, worker caps, locks
-- [ ] Worker processes (child_process fork), IPC of events, worker hooks + worker store
-- [ ] Group hooks (BeforeGroup/AfterGroup) + group store
-- [ ] Hard vs soft dependencies; skip reason `dependency failed: <id>`
-- [ ] Exports between scenarios (`ctx.export(k,v)`, `ctx.from(id).get(k)`), serialised across processes
-- [ ] Event schema additions: `workerStarted`, `groupStarted/Finished`, scenario `groupIds`, `waitedForMs`
-- [ ] Conformance: features covering every dependency/lock/group rule
-- [ ] Gate: groups, dependencies and locks demo passes
+- [x] Planner (`core/src/plan`): DAG of instances + groups; validates cycles, unknown ids/groups, bad priority/workers
+- [x] `bddx plan` (`--plan-format text|json|mermaid`)
+- [x] `bddx plan --explain <id>`
+- [x] Dependencies of selected scenarios are pulled in by default (`--no-deps` to disable); deps resolved across all spec files
+- [x] Scheduler (`runtime/src/scheduler.ts`): ready queue by priority, workers, group modes/caps, locks, exclusive (in-process async)
+- [ ] Worker processes (child_process fork), IPC of events, worker hooks + worker store (NEXT)
+- [x] Group hooks (BeforeGroup/AfterGroup) + group store (`ctx.groups[name]`); feature/rule/group scopes ref-counted
+- [x] Hard vs soft dependencies; skip reason `dependency failed: <id> (<status>)`; group `onDependencyFailure`
+- [x] Exports between scenarios (`ctx.export`, `ctx.from(id).get`), structured-clone copies (ready for processes)
+- [x] Events: `groupStarted/Finished`, planReady `workers`/`groups`, PlannedScenario `groups/dependsOn/locks/priority/exclusive/pulledInBy`
+- [ ] Events: `workerStarted`, `waitedForMs` (with worker processes)
+- [x] Conformance: `dependencies.feature` (hard/soft/priority); timing rules covered by runtime tests
+- [ ] `@requires:<file.feature>` spec-level preconditions
+- [ ] HTML/console view of the executed graph (timeline per worker) — Phase 5
+- [x] Gate: groups, dependencies and locks demo passes (`examples/orchestration`, `npm run example:orchestration`)
 
 ## Phase 4: Resilience
 

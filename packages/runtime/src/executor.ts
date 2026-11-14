@@ -1,24 +1,26 @@
 /**
- * Serial executor (phase 1).
+ * Executor: runs a Plan (Phase 3) — features, rules, groups, scenarios, steps, hooks — and emits events.
  *
- * Runs scenarios in the given order, grouped by feature (first-appearance order),
- * firing hooks at run / feature / rule / scenario / step level and emitting events.
+ * Execution order comes from the Scheduler (scheduler.ts): dependencies, priorities, locks, group modes and
+ * `workers` decide what runs when. Feature / rule / group scopes are OPENED lazily by their first scenario
+ * (Before* hooks run then) and CLOSED when their last scenario finishes or is skipped (After* hooks), using
+ * reference counts, so they work with any order and with concurrency.
  *
- * Phase 3 replaces the outer loop with a scheduler that pulls ready ScenarioInstances
- * from the plan graph and hands them to workers. `runScenario()` is designed to be
- * reused unchanged by those workers: it only needs the scenario, the registry, the
- * bus, and the parent scopes.
+ * Without an explicit plan, `execute()` builds one from the scenarios' tags with workers = 1, which keeps the
+ * Phase 1 behaviour (serial, features together, file order).
  *
  * FAILURE SEMANTICS (keep docs/IMPLEMENTATION.md in sync):
  *  - BeforeAll fails      -> every scenario skipped (reason names the hook); AfterAll still runs; run fails.
+ *  - BeforeGroup fails    -> the group's scenarios skipped; AfterGroup still runs; run fails.
  *  - BeforeFeature fails  -> the feature's scenarios skipped; AfterFeature still runs; run fails.
  *  - BeforeRule fails     -> the rule's scenarios skipped; AfterRule still runs; run fails.
+ *  - Hard dependency did not pass -> scenario skipped "dependency failed: <id> (<status>)". Soft: runs anyway.
  *  - Before (scenario) fails -> later before-hooks skipped unless `alwaysRun`; steps skipped;
  *                            After hooks still run; scenario 'failed'.
  *  - A step fails         -> remaining steps 'skipped'; After hooks run; scenario 'failed'.
  *  - BeforeStep fails     -> that step 'failed' (body not run); AfterStep still runs.
  *  - After/AfterStep fails -> scenario/step becomes 'failed' even if steps passed.
- *  - defer() cleanup throws -> owning scenario/feature becomes 'failed'.
+ *  - defer() cleanup throws -> owning scenario/feature/group becomes 'failed'.
  *  - ctx.pending()        -> step 'pending', remaining steps skipped, scenario 'pending'.
  *  - ctx.skip(reason)     -> step 'skipped', remaining skipped, scenario 'skipped' with reason.
  *  - undefined / ambiguous step -> that status, remaining steps skipped.
@@ -26,8 +28,9 @@
 import {
   BDDX_VERSION,
   EVENT_SCHEMA_VERSION,
-  emptySummary,
+  buildPlan,
   compileTagExpression,
+  emptySummary,
   toErrorInfo,
   worstStatus,
   type ErrorInfo,
@@ -35,6 +38,8 @@ import {
   type FeatureInfo,
   type HookLevel,
   type ParsedSpec,
+  type Plan,
+  type PlanNode,
   type RuleRef,
   type RunSummary,
   type ScenarioInstance,
@@ -42,15 +47,18 @@ import {
   type StepInstance,
 } from '@bddx/core';
 import { randomUUID } from 'node:crypto';
-import { Scope } from './context.js';
+import { Scope, Store } from './context.js';
 import { DataTable, DocString } from './datatable.js';
 import type { SupportRegistry } from './registry.js';
+import { schedule } from './scheduler.js';
 import { PendingSignal, SkipSignal, withTimeout } from './signals.js';
-import type { CurrentStepInfo, FeatureContext, HookDefinition, RunContext, StepContext } from './types.js';
+import type { CurrentStepInfo, FeatureContext, GroupContext, HookDefinition, RunContext, StepContext } from './types.js';
 
 export interface ExecuteOptions {
   registry: SupportRegistry;
   bus: EventBus;
+  /** Execution plan (groups, dependencies, workers). Default: built from scenario tags, workers = 1. */
+  plan?: Plan;
   /** Parsed specs, only used to emit `specParsed` events. */
   specs?: ParsedSpec[];
   dryRun?: boolean;
@@ -59,7 +67,6 @@ export interface ExecuteOptions {
   /** When true (default) pending/undefined/ambiguous scenarios fail the run. */
   strict?: boolean;
   params?: Record<string, string>;
-  workerId?: string;
   runId?: string;
 }
 
@@ -80,24 +87,44 @@ interface Emitters {
   stepId?: string;
 }
 
+/** A lazily opened, reference-counted scope (feature, rule or group). */
+interface OpenScope {
+  scope: Scope;
+  opened: Promise<string | undefined>; // resolves to a fatal reason when its Before* hooks failed
+  remaining: number;
+  hookFailed: boolean;
+  members: string[];
+}
+
 export class Executor {
   private readonly summary = emptySummary();
   private readonly statuses = new Map<string, Status>();
   private readonly params: Readonly<Record<string, string>>;
-  private readonly workerId: string;
   private runFailed = false;
   private runError: unknown;
-  private stopRequested = false;
+  private stopReason: string | undefined;
+  private readonly exportsById = new Map<string, Record<string, unknown>>();
+  // populated per run
+  private runScope = new Scope('run');
+  private plan!: Plan;
+  private readonly features = new Map<string, OpenScope>();
+  private readonly rules = new Map<string, OpenScope>();
+  private readonly groups = new Map<string, OpenScope>();
+  private readonly remaining = { features: new Map<string, number>(), rules: new Map<string, number>(), groups: new Map<string, number>() };
 
   constructor(private readonly opts: ExecuteOptions) {
     this.params = Object.freeze({ ...(opts.params ?? {}) });
-    this.workerId = opts.workerId ?? 'main';
   }
 
   async execute(scenarios: readonly ScenarioInstance[]): Promise<ExecuteResult> {
     const { bus, registry } = this.opts;
     const started = Date.now();
     registry.finalize();
+    const plan = this.opts.plan ?? buildPlan(scenarios, scenarios, { workers: 1, withDeps: false });
+    if (plan.errors.length) {
+      throw new Error(`Invalid plan:\n${plan.errors.map((e) => `  ${e.uri ? `${e.uri}:${e.line} ` : ''}${e.message}`).join('\n')}`);
+    }
+    this.plan = plan;
 
     bus.emit({
       type: 'runStarted',
@@ -118,57 +145,47 @@ export class Executor {
     }
     bus.emit({
       type: 'planReady',
-      scenarios: scenarios.map((s) => ({
-        id: s.id,
-        keyword: s.keyword,
-        name: s.name,
-        description: s.description,
-        feature: {
-          name: s.feature.name,
-          description: s.feature.description,
-          line: s.feature.line,
-          tags: s.feature.tags.map((t) => t.name),
-          language: s.feature.language,
-        },
-        uri: s.uri,
-        line: s.line,
-        featureName: s.feature.name,
-        ...(s.rule ? { ruleName: s.rule.name } : {}),
-        ...(s.example
-          ? {
-              example: {
-                name: s.example.name,
-                index: s.example.index,
-                values: s.example.values,
-                ...(s.example.source ? { source: s.example.source, sourceRow: s.example.sourceRow! } : {}),
-              },
-            }
-          : {}),
-        tags: s.tags.map((t) => t.name),
-        steps: s.steps.map((st) => ({ id: st.id, keyword: st.keyword, text: st.text, line: st.line })),
+      workers: plan.workers,
+      groups: [...plan.groups.values()].map((g) => ({
+        name: g.name,
+        mode: g.mode,
+        ...(g.workers !== undefined ? { workers: g.workers } : {}),
+        dependsOn: g.dependsOn,
+        members: g.members,
       })),
+      scenarios: plan.nodes.map((n) => plannedScenario(n)),
     });
 
-    const runScope = new Scope('run');
-    const runCtx = this.makeRunContext(runScope, {});
-    let runFatal: string | undefined;
+    // reference counts for lazily opened scopes
+    for (const n of plan.nodes) {
+      const s = n.scenario;
+      inc(this.remaining.features, s.uri);
+      if (s.rule) inc(this.remaining.rules, ruleKey(s));
+      for (const g of n.groups) inc(this.remaining.groups, g);
+    }
 
+    const runCtx = this.makeRunContext(this.runScope, {});
     if (!this.opts.dryRun) {
       const outcome = await this.runHooks('run', 'before', runCtx, () => true, {});
       if (outcome.status === 'failed') {
-        runFatal = `BeforeAll hook "${outcome.hookName}" failed`;
+        this.stopReason = `BeforeAll hook "${outcome.hookName}" failed`;
         this.runFailed = true;
         this.runError ??= outcome.error;
       }
     }
 
-    for (const [featureScenarios, feature] of groupByFeature(scenarios)) {
-      if (runFatal || this.stopRequested) {
-        for (const s of featureScenarios) this.skipScenario(s, runFatal ?? 'fail-fast: an earlier scenario failed');
-        continue;
-      }
-      await this.runFeature(feature, featureScenarios, runScope);
-    }
+    await schedule(
+      plan,
+      {
+        runNode: (node, workerId) => this.runNode(node, workerId),
+        skipNode: async (node, reason) => {
+          this.skipScenario(node.scenario, reason, 'scheduler');
+          await this.release(node);
+        },
+        stopReason: () => this.stopReason,
+      },
+      { ignoreDependencyResults: !!this.opts.dryRun },
+    );
 
     if (!this.opts.dryRun) {
       const after = await this.runHooks('run', 'after', runCtx, () => true, {});
@@ -176,7 +193,7 @@ export class Executor {
         this.runFailed = true;
         this.runError ??= after.error;
       }
-      const cleanupErrors = await runScope.close();
+      const cleanupErrors = await this.runScope.close();
       if (cleanupErrors.length) {
         this.runFailed = true;
         this.runError ??= cleanupErrors[0];
@@ -197,93 +214,174 @@ export class Executor {
     return { success, summary: this.summary, scenarioStatuses: this.statuses };
   }
 
-  // ---------------------------------------------------------------- features & rules
+  // ---------------------------------------------------------------- one plan node
 
-  private async runFeature(feature: FeatureInfo, scenarios: ScenarioInstance[], runScope: Scope): Promise<void> {
-    const { bus } = this.opts;
-    const featureScope = new Scope('feature');
-    const featureTags = feature.tags.map((t) => t.name);
-    const fctx = this.makeFeatureContext(runScope, featureScope, feature, undefined, {});
-    bus.emit({ type: 'featureStarted', uri: feature.uri, name: feature.name });
+  private async runNode(node: PlanNode, workerId: string): Promise<Status> {
+    const s = node.scenario;
+    try {
+      const groupStores: Record<string, Store> = {};
+      for (const g of node.groups) {
+        const og = this.openGroup(g);
+        const fatal = await og.opened;
+        if (fatal) return this.skipScenario(s, fatal, workerId);
+        groupStores[g] = og.scope.store;
+      }
+      const of = this.openFeature(s);
+      const ffatal = await of.opened;
+      if (ffatal) return this.skipScenario(s, ffatal, workerId);
+      if (s.rule) {
+        const rfatal = await this.openRule(s, of.scope).opened;
+        if (rfatal) return this.skipScenario(s, rfatal, workerId);
+      }
+      const status = await this.runScenario(s, this.runScope, of.scope, 1, workerId, groupStores);
+      if (status === 'failed' && this.opts.failFast) this.stopReason ??= 'fail-fast: an earlier scenario failed';
+      return status;
+    } finally {
+      await this.release(node);
+    }
+  }
 
-    let featureFatal: string | undefined;
-    let featureHookFailed = false;
-    const dry = !!this.opts.dryRun;
+  /** Decrement scope counters; close scopes whose last member is done (rule, feature, then groups). */
+  private async release(node: PlanNode): Promise<void> {
+    const s = node.scenario;
+    if (s.rule && dec(this.remaining.rules, ruleKey(s)) === 0) await this.closeRule(s);
+    if (dec(this.remaining.features, s.uri) === 0) await this.closeFeature(s.feature);
+    for (const g of node.groups) if (dec(this.remaining.groups, g) === 0) await this.closeGroup(g);
+  }
 
-    if (!dry) {
-      const before = await this.runHooks('feature', 'before', fctx, tagFilter(featureTags), { uri: feature.uri });
+  // ---------------------------------------------------------------- lazily opened scopes
+
+  private openFeature(s: ScenarioInstance): OpenScope {
+    let f = this.features.get(s.uri);
+    if (f) return f;
+    const scope = new Scope('feature');
+    const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
+    this.features.set(s.uri, entry);
+    entry.opened = (async () => {
+      this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
+      if (this.opts.dryRun) return undefined;
+      const ctx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {});
+      const before = await this.runHooks('feature', 'before', ctx, tagFilter(s.feature.tags.map((t) => t.name)), { uri: s.uri });
       if (before.status === 'failed') {
-        featureFatal = `BeforeFeature hook "${before.hookName}" failed`;
-        featureHookFailed = true;
+        entry.hookFailed = true;
+        return `BeforeFeature hook "${before.hookName}" failed`;
       }
-    }
+      return undefined;
+    })();
+    return entry;
+  }
 
-    let currentRule: RuleRef | undefined;
-    let ruleFatal: string | undefined;
-
-    const closeRule = async () => {
-      if (!currentRule || dry || featureFatal) return;
-      const rctx = this.makeFeatureContext(runScope, featureScope, feature, currentRule, {});
-      const after = await this.runHooks('rule', 'after', rctx, tagFilter(ruleTags(currentRule)), { uri: feature.uri });
-      if (after.status === 'failed') featureHookFailed = true;
-    };
-
-    for (const scenario of scenarios) {
-      if (scenario.rule?.id !== currentRule?.id) {
-        await closeRule();
-        currentRule = scenario.rule;
-        ruleFatal = undefined;
-        if (currentRule && !dry && !featureFatal) {
-          const rctx = this.makeFeatureContext(runScope, featureScope, feature, currentRule, {});
-          const before = await this.runHooks('rule', 'before', rctx, tagFilter(ruleTags(currentRule)), { uri: feature.uri });
-          if (before.status === 'failed') {
-            ruleFatal = `BeforeRule hook "${before.hookName}" failed`;
-            featureHookFailed = true;
-          }
-        }
-      }
-      if (featureFatal || ruleFatal) {
-        this.skipScenario(scenario, (featureFatal ?? ruleFatal)!);
-        continue;
-      }
-      if (this.stopRequested) {
-        this.skipScenario(scenario, 'fail-fast: an earlier scenario failed');
-        continue;
-      }
-      const status = await this.runScenario(scenario, runScope, featureScope);
-      if (status === 'failed' && this.opts.failFast) this.stopRequested = true;
-    }
-    await closeRule();
-
-    if (!dry) {
-      const after = await this.runHooks('feature', 'after', fctx, tagFilter(featureTags), { uri: feature.uri });
-      if (after.status === 'failed') featureHookFailed = true;
-      const cleanupErrors = await featureScope.close();
+  private async closeFeature(feature: FeatureInfo): Promise<void> {
+    const f = this.features.get(feature.uri);
+    if (!f) return; // never opened (all its scenarios were skipped before starting)
+    await f.opened;
+    if (!this.opts.dryRun) {
+      const ctx = this.makeFeatureContext(this.runScope, f.scope, feature, undefined, {});
+      const after = await this.runHooks('feature', 'after', ctx, tagFilter(feature.tags.map((t) => t.name)), { uri: feature.uri });
+      if (after.status === 'failed') f.hookFailed = true;
+      const cleanupErrors = await f.scope.close();
       if (cleanupErrors.length) {
-        featureHookFailed = true;
+        f.hookFailed = true;
         this.emitHookLikeError('feature', 'after', 'feature cleanup (defer)', cleanupErrors[0], { uri: feature.uri });
       }
     }
-    if (featureHookFailed) this.runFailed = true;
-
-    const status = featureHookFailed
-      ? 'failed'
-      : worstStatus(scenarios.map((s) => this.statuses.get(s.id) ?? 'skipped'));
-    bus.emit({ type: 'featureFinished', uri: feature.uri, name: feature.name, status });
+    if (f.hookFailed) this.runFailed = true;
+    const members = this.plan.nodes.filter((n) => n.scenario.uri === feature.uri).map((n) => this.statuses.get(n.id) ?? 'skipped');
+    this.opts.bus.emit({
+      type: 'featureFinished',
+      uri: feature.uri,
+      name: feature.name,
+      status: f.hookFailed ? 'failed' : worstStatus(members),
+    });
   }
 
-  // ---------------------------------------------------------------- scenarios
+  private openRule(s: ScenarioInstance, featureScope: Scope): OpenScope {
+    const key = ruleKey(s);
+    let r = this.rules.get(key);
+    if (r) return r;
+    const entry: OpenScope = { scope: featureScope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
+    this.rules.set(key, entry);
+    entry.opened = (async () => {
+      if (this.opts.dryRun) return undefined;
+      const ctx = this.makeFeatureContext(this.runScope, featureScope, s.feature, s.rule, {});
+      const before = await this.runHooks('rule', 'before', ctx, tagFilter(ruleTags(s.rule!)), { uri: s.uri });
+      if (before.status === 'failed') {
+        entry.hookFailed = true;
+        this.runFailed = true;
+        return `BeforeRule hook "${before.hookName}" failed`;
+      }
+      return undefined;
+    })();
+    return entry;
+  }
+
+  private async closeRule(s: ScenarioInstance): Promise<void> {
+    const r = this.rules.get(ruleKey(s));
+    if (!r) return;
+    await r.opened;
+    if (this.opts.dryRun) return; // AfterRule runs even when BeforeRule failed
+    const ctx = this.makeFeatureContext(this.runScope, r.scope, s.feature, s.rule, {});
+    const after = await this.runHooks('rule', 'after', ctx, tagFilter(ruleTags(s.rule!)), { uri: s.uri });
+    if (after.status === 'failed') this.runFailed = true;
+  }
+
+  private openGroup(name: string): OpenScope {
+    let g = this.groups.get(name);
+    if (g) return g;
+    const scope = new Scope('group');
+    const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
+    this.groups.set(name, entry);
+    entry.opened = (async () => {
+      this.opts.bus.emit({ type: 'groupStarted', group: name });
+      if (this.opts.dryRun) return undefined;
+      const ctx = this.makeGroupContext(scope, name);
+      const before = await this.runHooks('group', 'before', ctx, groupFilter(name), {});
+      if (before.status === 'failed') {
+        entry.hookFailed = true;
+        return `BeforeGroup hook "${before.hookName}" failed (group ${name})`;
+      }
+      return undefined;
+    })();
+    return entry;
+  }
+
+  private async closeGroup(name: string): Promise<void> {
+    const g = this.groups.get(name);
+    if (!g) return;
+    await g.opened;
+    if (!this.opts.dryRun) {
+      const after = await this.runHooks('group', 'after', this.makeGroupContext(g.scope, name), groupFilter(name), {});
+      if (after.status === 'failed') g.hookFailed = true;
+      const cleanupErrors = await g.scope.close();
+      if (cleanupErrors.length) {
+        g.hookFailed = true;
+        this.emitHookLikeError('group', 'after', `group ${name} cleanup (defer)`, cleanupErrors[0], {});
+      }
+    }
+    if (g.hookFailed) this.runFailed = true;
+    const members = (this.plan.groups.get(name)?.members ?? []).map((id) => this.statuses.get(id) ?? 'skipped');
+    this.opts.bus.emit({ type: 'groupFinished', group: name, status: g.hookFailed ? 'failed' : worstStatus(members) });
+  }
+
+// ---------------------------------------------------------------- scenarios
 
   /** Run one scenario (one attempt). Returns its final status. */
-  async runScenario(scenario: ScenarioInstance, runScope: Scope, featureScope: Scope, attempt = 1): Promise<Status> {
+  async runScenario(
+    scenario: ScenarioInstance,
+    runScope: Scope,
+    featureScope: Scope,
+    attempt = 1,
+    workerId = 'w1',
+    groupStores: Record<string, Store> = {},
+  ): Promise<Status> {
     const { bus } = this.opts;
     const started = Date.now();
     const scope = new Scope('scenario');
     const tagNames = scenario.tags.map((t) => t.name);
     const ids: Emitters = { scenarioId: scenario.id };
-    bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt, workerId: this.workerId });
+    bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt, workerId });
 
-    const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids);
+    const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids, groupStores);
     const statuses: Status[] = [];
     let error: unknown;
     let skipReason: string | undefined;
@@ -409,9 +507,10 @@ export class Executor {
     return finish(status, { definition, ...(error !== undefined && status !== 'skipped' ? { error } : {}), ...(skipReason ? { skipReason } : {}) });
   }
 
-  private skipScenario(scenario: ScenarioInstance, reason: string): void {
-    this.opts.bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt: 1, workerId: this.workerId });
+  private skipScenario(scenario: ScenarioInstance, reason: string, workerId: string): Status {
+    this.opts.bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt: 1, workerId });
     this.finishScenario(scenario, 1, 'skipped', 0, undefined, reason);
+    return 'skipped';
   }
 
   private finishScenario(scenario: ScenarioInstance, attempt: number, status: Status, durationMs: number, error?: unknown, reason?: string) {
@@ -542,7 +641,25 @@ export class Executor {
     return ctx;
   }
 
-  private makeStepContext(runScope: Scope, featureScope: Scope, scope: Scope, s: ScenarioInstance, attempt: number, ids: Emitters): StepContext {
+  private makeGroupContext(scope: Scope, name: string): GroupContext {
+    const base = this.makeRunContext(this.runScope, {});
+    const ctx: GroupContext = Object.assign(base, {
+      group: scope.store,
+      groupName: name,
+      defer: (fn: () => unknown) => scope.defer(fn),
+    });
+    return ctx;
+  }
+
+  private makeStepContext(
+    runScope: Scope,
+    featureScope: Scope,
+    scope: Scope,
+    s: ScenarioInstance,
+    attempt: number,
+    ids: Emitters,
+    groupStores: Record<string, Store> = {},
+  ): StepContext {
     const base = this.makeFeatureContext(runScope, featureScope, s.feature, s.rule, ids);
     const ctx: StepContext = Object.assign(base, {
       scenario: {
@@ -558,6 +675,37 @@ export class Executor {
         attempt,
       },
       state: scope.store,
+      groups: Object.freeze({ ...groupStores }),
+      export: (key: string, value: unknown) => {
+        let copy: unknown;
+        try {
+          copy = structuredClone(value);
+        } catch {
+          throw new Error(`ctx.export("${key}"): value must be serialisable (structured clone): plain data only`);
+        }
+        const bucket = this.exportsById.get(s.id) ?? {};
+        bucket[key] = copy;
+        this.exportsById.set(s.id, bucket);
+      },
+      from: (id: string) => {
+        if (!this.statuses.has(id)) {
+          const known = this.plan.byId.has(id);
+          throw new Error(
+            known
+              ? `ctx.from("${id}"): that scenario has not finished yet. Add @dependsOn:${id} to wait for it.`
+              : `ctx.from("${id}"): no scenario with this id in the plan`,
+          );
+        }
+        const bucket = this.exportsById.get(id) ?? {};
+        return {
+          get: <T = unknown>(key: string): T => {
+            if (!(key in bucket)) throw new Error(`Scenario "${id}" did not export "${key}". Exported: [${Object.keys(bucket).join(', ')}]`);
+            return structuredClone(bucket[key]) as T;
+          },
+          has: (key: string) => key in bucket,
+          keys: () => Object.keys(bucket),
+        };
+      },
       defer: (fn: () => unknown) => scope.defer(fn),
       pending: (reason?: string): never => {
         throw new PendingSignal(reason);
@@ -587,15 +735,62 @@ function ruleTags(rule: RuleRef): string[] {
   return rule.tags.map((t) => t.name);
 }
 
-/** Keep plan order, but run each feature's scenarios together (first-appearance order). */
-function groupByFeature(scenarios: readonly ScenarioInstance[]): Array<[ScenarioInstance[], FeatureInfo]> {
-  const groups = new Map<string, [ScenarioInstance[], FeatureInfo]>();
-  for (const s of scenarios) {
-    const g = groups.get(s.uri);
-    if (g) g[0].push(s);
-    else groups.set(s.uri, [[s], s.feature]);
-  }
-  return [...groups.values()];
+function inc(m: Map<string, number>, k: string) {
+  m.set(k, (m.get(k) ?? 0) + 1);
+}
+
+function dec(m: Map<string, number>, k: string): number {
+  const v = (m.get(k) ?? 0) - 1;
+  m.set(k, v);
+  return v;
+}
+
+function ruleKey(s: ScenarioInstance): string {
+  return `${s.uri}#${s.rule?.id ?? ''}`;
+}
+
+/** Group hooks: no `tags` = every group; otherwise the expression sees `@group:<name>` and `@<name>`. */
+function groupFilter(name: string) {
+  return (hook: HookDefinition) => !hook.tags || compileTagExpression(hook.tags)([`@group:${name}`, `@${name}`]);
+}
+
+function plannedScenario(n: PlanNode) {
+  const s = n.scenario;
+  return {
+    id: s.id,
+    keyword: s.keyword,
+    name: s.name,
+    description: s.description,
+    feature: {
+      name: s.feature.name,
+      description: s.feature.description,
+      line: s.feature.line,
+      tags: s.feature.tags.map((t) => t.name),
+      language: s.feature.language,
+    },
+    uri: s.uri,
+    line: s.line,
+    featureName: s.feature.name,
+    ...(s.rule ? { ruleName: s.rule.name } : {}),
+    ...(s.example
+      ? {
+          example: {
+            name: s.example.name,
+            index: s.example.index,
+            values: s.example.values,
+            ...(s.example.source ? { source: s.example.source, sourceRow: s.example.sourceRow! } : {}),
+          },
+        }
+      : {}),
+    tags: s.tags.map((t) => t.name),
+    steps: s.steps.map((st) => ({ id: st.id, keyword: st.keyword, text: st.text, line: st.line })),
+    groups: n.groups,
+    dependsOn: n.deps.map((d) => ({ id: d.target, soft: d.soft })),
+    locks: n.locks,
+    priority: n.priority,
+    exclusive: n.exclusive,
+    ...(n.pulledInBy ? { pulledInBy: n.pulledInBy } : {}),
+  };
 }
 
 /** Convenience wrapper: `await execute(scenarios, { registry, bus })`. */

@@ -2,25 +2,27 @@
 
 The single source of truth for "where are we". Update it at the end of every work session (see CLAUDE.md).
 
-## Current state (2026-11-15, session 2)
+## Current state (2026-11-15, session 3)
 
-- **Phase 0:** done (CCK parse gate deferred).
-- **Phase 1:** done except the "real project" gate (run the user's own app end to end).
-- **Phase 2:** core done: `@data` with CSV/TSV/JSON/YAML/XLSX, filters, `@dataField`, `dataDir` + per-profile data,
-  stable data-row ids, data errors as parse errors. Remaining Phase 2 items below.
-- **Health:** `npm run verify` green on the user's Mac. 65 tests.
-- **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, git remote `git@github.com:afsarali273/SmartBDD.git`
-  (SSH; the user pushes from their Mac).
+- **Phases 0–1:** done. **Phase 2:** data core done; text composite steps, call-a-scenario, Phase 2 gate remain.
+- **Phase 3:** planner, `bddx plan`/`--explain`, dependency closure, in-process scheduler (workers, priorities, locks,
+  serial/parallel/exclusive groups, group caps), group hooks/stores, hard/soft deps, exports, orchestration example. Gate passed.
+  Remaining: worker processes, `@requires`, timeline view.
+- **Health:** `npm run verify` green on the user's Mac (89 tests + both examples).
+- **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
+  (SSH; the owner pushes from their Mac).
 
 ## Next up
 
-1. **Text-defined composite steps** (Gauge concepts / JBehave composites): `*.concept.md` files defining
-   `# Login as <user>` followed by `* steps`; register as step definitions that run sub-steps (each sub-step
-   reported as nested events → needs additive `parentStepId` on step events).
-2. **Call a scenario from a step**: `Given I run scenario "X" from "y.feature"` (runtime step that executes another
-   instance's steps inline, sharing the scenario store).
-3. **Phase 2 gate**: same feature from inline Examples, CSV and XLSX with identical results (add to conformance).
-4. Then **Phase 3** (planner, groups, dependencies, workers): start with `packages/core/src/plan/` and `bddx plan`.
+1. **Worker processes** (Phase 3): `runtime/src/workers/` — fork N children (`child_process.fork` of a worker entry in
+   the CLI package), each loads config + support code once; parent keeps the plan + scheduler and sends `runNode`
+   requests `{scenarioId}`; children stream events back over IPC; parent re-emits them. Exports travel with the
+   result. Worker hooks (`BeforeWorker/AfterWorker`) + worker store. Feature/group scopes: decide per-worker vs
+   global (likely: Before/AfterFeature per worker that runs members — document clearly; group hooks in parent?).
+   Write an ADR before coding. Keep `workers` in-process mode as `--pool=threads|inline` default inline.
+2. **Phase 4: retries** (step / scenario / group / rerun-failed), flaky status, quarantine — design is in ROADMAP.
+3. Phase 2 leftovers: text composite steps, call-a-scenario, Phase 2 gate.
+4. `@requires:<file.feature>` preconditions.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
 Do not start it without the owner.
@@ -85,3 +87,18 @@ Worked directly in the user's folder via device shell.
 - Hooks: `BeforeSuite`/`AfterSuite` aliases; hook decorators on static methods for every level (`staticHookDecorator`).
 - Owner's code-linked Markdown idea captured in `docs/design/code-linked-markdown.md` (parked); Gauge-style Markdown
   item removed from Phase 2.
+
+### 2026-11-15: Session 3 (Phase 3: orchestration)
+
+- Commit `74ff469` (ports & adapters).
+- core: `plan/` — `types.ts` (vocabulary), `planner.ts` (`buildPlan`, closure, validation, cycles, `explainNode`),
+  `render.ts` (text, mermaid, JSON). Selection matched by id, not object identity (bug found by tests).
+- runtime: `scheduler.ts`; `executor.ts` top half rewritten around the plan: lazily opened, ref-counted feature/rule/group
+  scopes; `BeforeGroup/AfterGroup`; `ctx.groups`, `ctx.export`, `ctx.from`; workerId = slot `w1..wN`.
+- events: `groupStarted/Finished`, `planReady.workers/groups`, orchestration fields on `PlannedScenario`; HookLevel `group`.
+- cli: `prepareRun()` shared by run/plan; `bddx plan` (`--plan-format`, `--explain`); `-w/--workers`, `--no-deps`; config
+  `workers`, `groups`; all configured specs parsed so cross-file deps resolve.
+- tests: planner (5), orchestration (12, timing-based; ran 3× stable), CLI plan/deps/orchestration (3), conformance
+  `dependencies.feature` (expected.json gained `config`).
+- example: `examples/orchestration` (4 groups, exports, group hooks, exclusive report), npm scripts
+  `example:orchestration`, `plan:orchestration`; `verify` runs both examples.

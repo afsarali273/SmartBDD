@@ -4,7 +4,9 @@ import { pathToFileURL } from 'node:url';
 import { glob } from 'tinyglobby';
 import {
   EventBus,
+  buildPlan,
   createFileDataLoader,
+  type Plan,
   parsePathWithLines,
   parseSpecFile,
   specFileGlobSuffix,
@@ -35,6 +37,10 @@ export interface RunRequest {
   stepTimeoutMs?: number;
   /** Override all reporters (programmatic use / tests). */
   reporters?: Reporter[];
+  /** Max concurrent scenarios (overrides config `workers`). */
+  workers?: number;
+  /** Pull in dependencies of selected scenarios (default true). */
+  withDeps?: boolean;
 }
 
 export interface RunOutcome {
@@ -85,7 +91,17 @@ export async function discoverSupportFiles(rootDir: string, patterns: string[]):
 }
 
 /** The whole `bddx run` pipeline, usable programmatically. */
-export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
+export interface PreparedRun {
+  rootDir: string;
+  opts: BddxOptions;
+  specs: ParsedSpec[];
+  all: ScenarioInstance[];
+  selected: ScenarioInstance[];
+  plan: Plan;
+}
+
+/** Config + discovery + parsing + selection + plan. Shared by `run`, `plan` and `list`. */
+export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   const cwd = req.cwd ?? process.cwd();
   await registerTypeScriptLoader();
   const loaded = await loadConfig(req.config, cwd, req.profile);
@@ -99,6 +115,7 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   if (req.failFast !== undefined) cliOverrides.failFast = req.failFast;
   if (req.strict !== undefined) cliOverrides.strict = req.strict;
   if (req.stepTimeoutMs !== undefined) cliOverrides.stepTimeoutMs = req.stepTimeoutMs;
+  if (req.workers !== undefined) cliOverrides.workers = req.workers;
   opts = mergeOptions(opts, cliOverrides);
 
   // CLI paths are relative to cwd; config globs are relative to rootDir.
@@ -112,22 +129,44 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const { files, lines } = await discoverSpecs(rootDir, featurePatterns);
   if (!files.length) throw new UsageError(`No spec files found for: ${featurePatterns.join(', ')} (root: ${rootDir})`);
 
+  // Dependencies may live in files outside the selected paths: parse every configured spec for resolution.
+  const allFiles = req.paths?.length
+    ? [...new Set([...files, ...(await discoverSpecs(rootDir, asArray(opts.features ?? DEFAULTS.features))).files])]
+    : files;
   const dataLoader = makeDataLoader(rootDir, opts, req.profile);
   const specs: ParsedSpec[] = [];
-  for (const uri of files) {
+  for (const uri of allFiles) {
     const source = await readFile(resolve(rootDir, uri), 'utf8');
     specs.push(await parseSpecFile(source, uri, { dataLoader, ...(opts.language ? { language: opts.language } : {}) }));
   }
+  const inPaths = new Set(files);
   const all = specs.flatMap((s) => s.scenarios);
-  const selected = selectScenarios(all, {
-    ...(opts.tags ? { tags: opts.tags } : {}),
-    ...(opts.name ? { name: opts.name } : {}),
-    ...(Object.keys(lines).length ? { lines } : {}),
+  const selected = selectScenarios(
+    all.filter((s) => inPaths.has(s.uri)),
+    {
+      ...(opts.tags ? { tags: opts.tags } : {}),
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(Object.keys(lines).length ? { lines } : {}),
+    },
+  );
+  const plan = buildPlan(all, selected, {
+    workers: opts.workers ?? 1,
+    withDeps: req.withDeps ?? true,
+    ...(opts.groups ? { groups: opts.groups } : {}),
   });
+  return { rootDir, opts, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
+}
+
+/** The whole `bddx run` pipeline, usable programmatically. */
+export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
+  const { rootDir, opts, specs, plan } = await prepareRun(req);
+  if (plan.errors.length) {
+    process.stderr.write(`bddx: invalid execution plan:\n${plan.errors.map((e) => `  ${e.uri ? `${e.uri}:${e.line} ` : ''}${e.message}`).join('\n')}\n`);
+    return { success: false, exitCode: 2, scenarios: plan.nodes.map((n) => n.scenario) };
+  }
 
   // Support code: steps, hooks, parameter types. They register on the global registry.
   const registry = getGlobalRegistry();
-  if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
   const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
   for (const f of supportFiles) await import(pathToFileURL(f).href);
   if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
@@ -142,18 +181,19 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
     registry,
     bus,
     specs,
+    plan,
     dryRun: !!req.dryRun,
     failFast: !!opts.failFast,
     strict: opts.strict ?? true,
     params: opts.params ?? {},
-  }).execute(selected);
+  }).execute(plan.nodes.map((n) => n.scenario));
 
   const listenerErrors = await bus.flush();
   for (const r of reporters) await r.close?.();
   for (const e of listenerErrors) process.stderr.write(`Reporter error: ${e instanceof Error ? e.stack : String(e)}\n`);
 
   const exitCode: 0 | 1 | 2 = hasParseErrors ? 2 : result.success ? 0 : 1;
-  return { success: result.success && !hasParseErrors, summary: result.summary, exitCode, scenarios: selected };
+  return { success: result.success && !hasParseErrors, summary: result.summary, exitCode, scenarios: plan.nodes.map((n) => n.scenario) };
 }
 
 export function makeDataLoader(rootDir: string, opts: BddxOptions, profile?: string): DataLoader {

@@ -37,6 +37,20 @@ export interface RunContext {
   defer(fn: Cleanup): void;
 }
 
+/** Context for group-level hooks (BeforeGroup / AfterGroup). */
+export interface GroupContext extends RunContext {
+  /** Group-scoped store, shared by the group's hooks and visible to members as ctx.groups[name]. */
+  group: Store;
+  groupName: string;
+}
+
+/** Read-only view of another scenario's exports. */
+export interface ExportsView {
+  get<T = unknown>(key: string): T;
+  has(key: string): boolean;
+  keys(): string[];
+}
+
 /** Context for feature- and rule-level hooks. */
 export interface FeatureContext extends RunContext {
   /** Feature-scoped store, cleared after the feature. */
@@ -50,6 +64,12 @@ export interface StepContext extends FeatureContext {
   scenario: ScenarioInfo;
   /** Scenario-scoped store (the "world"). Fresh for every scenario and every attempt. */
   state: Store;
+  /** Stores of the named groups this scenario belongs to. */
+  groups: Readonly<Record<string, Store>>;
+  /** Publish a value for scenarios that depend on this one (deep-copied; plain data only). */
+  export(key: string, value: unknown): void;
+  /** Read the exports of a FINISHED scenario (declare @dependsOn:<id> so it finishes first). */
+  from(scenarioId: string): ExportsView;
   /** The current step (only inside steps and step hooks). */
   step?: CurrentStepInfo;
   /** Mark the current step pending. */
@@ -79,9 +99,10 @@ export interface HookOptions {
 
 export type RunHookFn = (ctx: RunContext) => unknown | Promise<unknown>;
 export type FeatureHookFn = (ctx: FeatureContext) => unknown | Promise<unknown>;
+export type GroupHookFn = (ctx: GroupContext) => unknown | Promise<unknown>;
 export type ScenarioHookFn = (ctx: StepContext) => unknown | Promise<unknown>;
 
-export type AnyHookFn = RunHookFn | FeatureHookFn | ScenarioHookFn;
+export type AnyHookFn = RunHookFn | GroupHookFn | FeatureHookFn | ScenarioHookFn;
 
 export interface HookDefinition {
   id: string;

@@ -15,7 +15,7 @@ import type { ErrorInfo, ParseErrorInfo, Status } from './model.js';
 
 export const EVENT_SCHEMA_VERSION = 1;
 
-export type HookLevel = 'run' | 'feature' | 'rule' | 'scenario' | 'step';
+export type HookLevel = 'run' | 'group' | 'feature' | 'rule' | 'scenario' | 'step';
 export type HookKind = 'before' | 'after';
 
 interface Base {
@@ -54,12 +54,42 @@ export interface PlannedScenario {
   example?: { name: string; index: number; values: Record<string, string>; source?: string; sourceRow?: number };
   tags: string[];
   steps: Array<{ id: string; keyword: string; text: string; line: number }>;
+  /** Phase 3 orchestration facts (from the plan). */
+  groups?: string[];
+  dependsOn?: Array<{ id: string; soft: boolean }>;
+  locks?: string[];
+  priority?: number;
+  exclusive?: boolean;
+  /** Not selected by the user; included as a dependency of these scenarios. */
+  pulledInBy?: string[];
+}
+
+export interface PlannedGroup {
+  name: string;
+  mode: 'parallel' | 'serial' | 'exclusive';
+  workers?: number;
+  dependsOn: string[];
+  members: string[];
 }
 
 /** Emitted once, after selection, before anything executes. */
 export interface PlanReady extends Base {
   type: 'planReady';
   scenarios: PlannedScenario[];
+  /** Max concurrent scenarios. */
+  workers?: number;
+  groups?: PlannedGroup[];
+}
+
+export interface GroupStarted extends Base {
+  type: 'groupStarted';
+  group: string;
+}
+
+export interface GroupFinished extends Base {
+  type: 'groupFinished';
+  group: string;
+  status: Status;
 }
 
 export interface FeatureStarted extends Base {
@@ -177,6 +207,8 @@ export type BddxEvent =
   | RunStarted
   | SpecParsed
   | PlanReady
+  | GroupStarted
+  | GroupFinished
   | FeatureStarted
   | FeatureFinished
   | HookStarted

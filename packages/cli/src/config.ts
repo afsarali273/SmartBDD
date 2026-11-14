@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ReporterSpec } from '@bddx/reporters';
+import type { GroupConfig } from '@bddx/core';
 
 /**
  * bddx.config.ts
@@ -41,6 +42,14 @@ export interface BddxOptions {
    * With --profile <p>, `<dataDir>/<p>/<file>` is tried first.
    */
   dataDir?: string;
+  /** Max scenarios running at once (in-process). Default 1. CLI: --workers. */
+  workers?: number;
+  /**
+   * Named groups: mode (parallel | serial | exclusive), workers cap, dependsOn other groups,
+   * onDependencyFailure ('skip' | 'run'), priority, locks, match (tag expression for membership).
+   * Scenarios also join groups with @group:<name>.
+   */
+  groups?: Record<string, GroupConfig>;
 }
 
 export interface BddxConfig extends BddxOptions {
@@ -101,6 +110,7 @@ export function mergeOptions(a: BddxOptions, b: BddxOptions): BddxOptions {
   const out: BddxOptions = { ...a, ...b };
   if (a.params || b.params) out.params = { ...a.params, ...b.params };
   if (a.tags && b.tags) out.tags = `(${a.tags}) and (${b.tags})`;
+  if (a.groups || b.groups) out.groups = { ...a.groups, ...b.groups };
   return out;
 }
 

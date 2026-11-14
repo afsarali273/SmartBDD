@@ -99,3 +99,16 @@ code-linked Markdown specs) register as additional `SpecParser`s. Lifecycle name
 
 **Consequences.** Any of the three libraries can be replaced without touching the runner. The Java port can implement
 the same ports with JVM libraries or its own parser. Small cost: one indirection per call.
+
+## ADR-015 Orchestration: pure planner + in-process scheduler first, worker processes next (2026-11-15)
+
+**Decision.** The plan is a pure data structure built in core (testable, renderable with `bddx plan`, portable to Java).
+Execution concurrency starts IN-PROCESS (async), which already gives parallel I/O-bound tests (API, browser automation
+drivers) and lets us prove the semantics (deps, locks, group modes, priority, exclusive, scope ref-counting) with fast
+tests. Worker processes come next behind the same `runNode` callback; exports are already structured-clone copies so
+they can cross process boundaries unchanged.
+
+**Semantics choices.** Hard dependency "passes" only with status `passed`. Selected scenarios pull in hard
+dependencies by default (`--no-deps` to opt out); soft deps never pull anything in. Group = outer scope relative to
+feature (close order rule → feature → group). Priority: lower first, TestNG-like. Ids for dependency targets should be
+`@id` tags; outline/data families can be targeted by their base id.

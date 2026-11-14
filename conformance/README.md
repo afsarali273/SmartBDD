@@ -43,8 +43,9 @@ Hooks used by the suite (registered only for scenarios/features tagged as below)
   "scenarios": { "<scenario id>": "passed | failed | skipped | pending | undefined | ambiguous" },
   "steps":     { "<scenario id>": ["passed", "failed", "skipped"] },
   "trace":     ["ordered", "strings", "recorded"],
+  "config":    { "workers": 1, "groups": { "name": { "mode": "serial" } } },
   "success":   false
 }
 ```
 
-Only the keys present are compared. Scenario ids follow the stable-id rules in docs/IMPLEMENTATION.md.
+Only the keys present are compared. `config` = plan options (Phase 3); keep `workers: 1` when asserting `trace` order. Scenario ids follow the stable-id rules in docs/IMPLEMENTATION.md.

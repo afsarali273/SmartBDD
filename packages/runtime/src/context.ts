@@ -53,7 +53,7 @@ export class Store {
 
 export type Cleanup = () => unknown | Promise<unknown>;
 
-export type ScopeLevel = 'run' | 'feature' | 'scenario';
+export type ScopeLevel = 'run' | 'group' | 'feature' | 'scenario';
 
 export class Scope {
   readonly store = new Store();

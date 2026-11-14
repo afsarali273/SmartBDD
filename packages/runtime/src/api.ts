@@ -13,6 +13,7 @@ import { callerLocation, getGlobalRegistry, type ParameterTypeOptions } from './
 import { hookDecorator, staticHookDecorator, stepDecorator, type MethodDecorator } from './decorators.js';
 import type {
   FeatureHookFn,
+  GroupHookFn,
   HookOptions,
   RunHookFn,
   ScenarioHookFn,
@@ -73,6 +74,12 @@ function makeHook<F>(level: HookLevel, kind: HookKind) {
 export const BeforeAll = makeHook<RunHookFn>('run', 'before');
 /** Once per run, after everything (always runs). */
 export const AfterAll = makeHook<RunHookFn>('run', 'after');
+/**
+ * Before the first member of a group starts / after its last member finishes.
+ * `tags` filter sees `@group:<name>` (e.g. BeforeGroup('@group:checkout', fn)); none = every group.
+ */
+export const BeforeGroup = makeHook<GroupHookFn>('group', 'before');
+export const AfterGroup = makeHook<GroupHookFn>('group', 'after');
 /** Before the first scenario of each feature. `tags` filters on FEATURE tags. */
 export const BeforeFeature = makeHook<FeatureHookFn>('feature', 'before');
 export const AfterFeature = makeHook<FeatureHookFn>('feature', 'after');
