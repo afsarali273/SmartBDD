@@ -5,7 +5,7 @@ export function renderPlanText(plan: Plan): string {
   const out: string[] = [`Plan: ${plan.nodes.length} scenario(s), ${plan.groups.size} group(s), workers=${plan.workers}`];
   for (const g of plan.groups.values()) {
     out.push(
-      `  group ${g.name}: ${g.mode}${g.workers ? ` x${g.workers}` : ''}, ${g.members.length} member(s)` +
+      `  group ${g.name}${g.implicit ? ' (ungrouped scenarios)' : ''}: ${g.mode}${g.workers ? ` x${g.workers}` : ''}, ${g.members.length} member(s)` +
         `${g.dependsOn.length ? `, after ${g.dependsOn.join(', ')}${g.onDependencyFailure === 'run' ? ' (soft)' : ''}` : ''}` +
         `${g.locks.length ? `, locks ${g.locks.join(', ')}` : ''}${g.priority ? `, priority ${g.priority}` : ''}`,
     );

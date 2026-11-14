@@ -53,6 +53,10 @@ file is self-contained.
 
 ## Phase 3: Orchestration (the differentiator) — in progress
 
+- [x] `defaultMode` / `groups.default` for ungrouped scenarios (implicit group: scheduling only)
+- [x] `--set path=value` overrides for any config option
+- [x] Levelled logging (`ctx.log.*`, global `log` via AsyncLocalStorage, `--log-level`, framework diagnostics)
+
 Proposed config:
 
 ```ts

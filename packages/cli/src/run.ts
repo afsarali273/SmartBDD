@@ -6,6 +6,7 @@ import {
   EventBus,
   buildPlan,
   createFileDataLoader,
+  type LogLevel,
   type Plan,
   parsePathWithLines,
   parseSpecFile,
@@ -17,8 +18,8 @@ import {
   type ScenarioInstance,
 } from '@bddx/core';
 import { Executor, getGlobalRegistry } from '@bddx/runtime';
-import { createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
-import { DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
+import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
+import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
 
 export interface RunRequest {
   cwd?: string;
@@ -41,6 +42,10 @@ export interface RunRequest {
   workers?: number;
   /** Pull in dependencies of selected scenarios (default true). */
   withDeps?: boolean;
+  /** `--set path=value` overrides, applied after the profile and before the other CLI flags. */
+  sets?: string[];
+  /** Console log level (overrides config `logLevel`). */
+  logLevel?: LogLevel;
 }
 
 export interface RunOutcome {
@@ -107,8 +112,9 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   const loaded = await loadConfig(req.config, cwd, req.profile);
   const rootDir = loaded.rootDir;
 
-  let opts: BddxOptions = loaded.options;
+  let opts: BddxOptions = req.sets?.length ? applySetOverrides(loaded.options, req.sets) : loaded.options;
   const cliOverrides: BddxOptions = {};
+  if (req.logLevel) cliOverrides.logLevel = req.logLevel;
   if (req.tags) cliOverrides.tags = req.tags;
   if (req.name) cliOverrides.name = req.name;
   if (req.params) cliOverrides.params = req.params;
@@ -153,7 +159,14 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
     workers: opts.workers ?? 1,
     withDeps: req.withDeps ?? true,
     ...(opts.groups ? { groups: opts.groups } : {}),
+    ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
   });
+  cliDebug(opts.logLevel, [
+    `config: ${loaded.configFile ?? '(none, defaults)'}${req.profile ? `, profile ${req.profile}` : ''}`,
+    ...(req.sets?.length ? [`--set: ${req.sets.join(' ')}`] : []),
+    `specs: ${files.length} selected file(s), ${allFiles.length} parsed; scenarios: ${all.length} total, ${selected.length} selected`,
+    `plan: ${plan.nodes.length} node(s), workers=${plan.workers}${opts.defaultMode ? `, defaultMode=${opts.defaultMode}` : ''}`,
+  ]);
   return { rootDir, opts, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
 }
 
@@ -169,10 +182,12 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const registry = getGlobalRegistry();
   const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
   for (const f of supportFiles) await import(pathToFileURL(f).href);
+  cliDebug(opts.logLevel, [`support code: ${supportFiles.length} file(s), ${registry.stepDefinitions.length} step(s), ${registry.hookDefinitions.length} hook(s)`]);
   if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
 
   const reporters =
-    req.reporters ?? [...(opts.reporters ?? ['console']), ...(req.formats ?? [])].map((spec) => createReporter(resolveOutputFile(spec, rootDir)));
+    req.reporters ??
+    [...(opts.reporters ?? ['console']), ...(req.formats ?? [])].map((spec) => createReporter(withLogLevel(resolveOutputFile(spec, rootDir), opts.logLevel)));
   const bus = new EventBus();
   for (const r of reporters) bus.on((e) => r.onEvent(e));
 
@@ -204,6 +219,16 @@ export function makeDataLoader(rootDir: string, opts: BddxOptions, profile?: str
   });
 }
 
+/** Console reporters get the effective log level unless their own options set one. */
+function withLogLevel(spec: ReporterSpec, level: BddxOptions['logLevel']): ReporterSpec {
+  if (!level) return spec;
+  if (typeof spec === 'string' && CONSOLE_REPORTERS.includes(spec)) return [spec, { logLevel: level }];
+  if (Array.isArray(spec) && CONSOLE_REPORTERS.includes(spec[0]) && spec[1]['logLevel'] === undefined) {
+    return [spec[0], { ...spec[1], logLevel: level }];
+  }
+  return spec;
+}
+
 /** Report paths in the config are relative to the config folder, not to the shell's cwd. */
 function resolveOutputFile(spec: ReporterSpec, rootDir: string): ReporterSpec {
   if (typeof spec === 'string') {
@@ -214,6 +239,12 @@ function resolveOutputFile(spec: ReporterSpec, rootDir: string): ReporterSpec {
     return [spec[0], { ...spec[1], outputFile: resolve(rootDir, spec[1]['outputFile']) }];
   }
   return spec;
+}
+
+/** CLI-side diagnostics (before the event bus exists) go to stderr at --log-level debug. */
+function cliDebug(level: BddxOptions['logLevel'], lines: string[]): void {
+  if (level !== 'debug') return;
+  for (const l of lines) process.stderr.write(`[bddx:debug] ${l}\n`);
 }
 
 function asArray(x: string | string[]): string[] {

@@ -112,3 +112,16 @@ they can cross process boundaries unchanged.
 dependencies by default (`--no-deps` to opt out); soft deps never pull anything in. Group = outer scope relative to
 feature (close order rule → feature → group). Priority: lower first, TestNG-like. Ids for dependency targets should be
 `@id` tags; outline/data families can be targeted by their base id.
+
+## ADR-016 Logging through the event stream; AsyncLocalStorage attribution (2026-11-15)
+
+Logs are events like everything else (one pipeline, available to every reporter and to the future HTML report),
+with levels debug/info/warn/error and `source` user|bddx. The global `log` uses AsyncLocalStorage so helpers need no
+context parameter and stay correct with concurrent scenarios. Console default threshold is `warn` so passing runs stay
+quiet; `--log-level debug` turns on user debug logs plus framework scheduling diagnostics.
+
+## ADR-017 `--set` generic overrides and implicit `default` group (2026-11-15)
+
+Every config option is reachable from the CLI via `--set path=value` with JSON-typed values (CI-friendly, no file edits),
+validated against `OPTION_KEYS`. Ungrouped scenarios get a group only when asked (`defaultMode` / `groups.default`),
+keeping the Phase 3 default (unconstrained) unchanged.

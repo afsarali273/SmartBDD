@@ -30,6 +30,9 @@ export const builtInReporters: Record<string, ReporterFactory> = {
  */
 export type ReporterSpec = string | [string, ReporterOptions] | Reporter;
 
+/** Reporters that print to the console (receive `logLevel`). */
+export const CONSOLE_REPORTERS = ['console', 'pretty', 'progress'];
+
 export function createReporter(spec: ReporterSpec): Reporter {
   if (typeof spec === 'object' && !Array.isArray(spec)) return spec;
   let name: string;

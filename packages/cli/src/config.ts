@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ReporterSpec } from '@bddx/reporters';
-import type { GroupConfig } from '@bddx/core';
+import type { GroupConfig, GroupMode, LogLevel } from '@bddx/core';
 
 /**
  * bddx.config.ts
@@ -50,6 +50,53 @@ export interface BddxOptions {
    * Scenarios also join groups with @group:<name>.
    */
   groups?: Record<string, GroupConfig>;
+  /** How ungrouped scenarios run: 'parallel' | 'serial' | 'exclusive'. Shorthand for groups.default.mode. */
+  defaultMode?: GroupMode;
+  /** Console log level: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. Events always contain every log. */
+  logLevel?: LogLevel | 'silent';
+}
+
+/** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
+export const OPTION_KEYS = [
+  'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel',
+] as const;
+
+/**
+ * Apply `--set path=value` overrides (repeatable), e.g.
+ *   --set workers=6  --set groups.checkout.mode=serial  --set 'groups.api.dependsOn=["setup"]'
+ *   --set params.baseUrl=https://qa.example.com
+ * Values are parsed as JSON when possible (numbers, true/false, null, arrays, objects, "quoted strings"),
+ * otherwise kept as plain strings. Unknown top-level keys are rejected (typo protection).
+ */
+export function applySetOverrides(options: BddxOptions, sets: readonly string[]): BddxOptions {
+  const out = structuredClone(options) as Record<string, unknown>;
+  for (const raw of sets) {
+    const eq = raw.indexOf('=');
+    if (eq <= 0) throw new UsageError(`--set expects path=value, got "${raw}"`);
+    const path = raw.slice(0, eq).split('.').filter(Boolean);
+    const valueText = raw.slice(eq + 1);
+    if (!(OPTION_KEYS as readonly string[]).includes(path[0]!)) {
+      throw new UsageError(`--set: unknown option "${path[0]}". Known: ${OPTION_KEYS.join(', ')}`);
+    }
+    let value: unknown = valueText;
+    try {
+      value = JSON.parse(valueText);
+    } catch {
+      /* plain string */
+    }
+    let cur = out;
+    for (const key of path.slice(0, -1)) {
+      const next = cur[key];
+      if (next === undefined || next === null) cur[key] = {};
+      else if (typeof next !== 'object' || Array.isArray(next)) {
+        throw new UsageError(`--set ${raw}: "${key}" is not an object`);
+      }
+      cur = cur[key] as Record<string, unknown>;
+    }
+    cur[path.at(-1)!] = value;
+  }
+  return out as BddxOptions;
 }
 
 export interface BddxConfig extends BddxOptions {

@@ -115,6 +115,29 @@ describe('scheduler: concurrency, locks, groups, priority', () => {
     expect(t.overlap('s1', 'p1')).toBe(true);
   });
 
+  it('defaultMode serial: ungrouped scenarios run one at a time but alongside groups; no group hooks for default', async () => {
+    const r = new SupportRegistry();
+    const t = timingSteps(r);
+    const hooks: string[] = [];
+    r.defineHook('group', 'before', {}, (c) => void hooks.push(c.groupName));
+    await run(
+      r,
+      `Feature: DM
+  Scenario: u1
+    Given work 30ms
+  Scenario: u2
+    Given work 30ms
+  @group:g
+  Scenario: g1
+    Given work 30ms
+`,
+      { workers: 3, defaultMode: 'serial' },
+    );
+    expect(t.overlap('u1', 'u2')).toBe(false);
+    expect(t.overlap('u1', 'g1')).toBe(true);
+    expect(hooks).toEqual(['g']);
+  });
+
   it('exclusive scenarios run alone', async () => {
     const r = new SupportRegistry();
     const t = timingSteps(r);

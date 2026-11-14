@@ -27,6 +27,8 @@ Options:
       --no-strict         Pending/undefined steps do not fail the run
       --timeout <ms>      Default step/hook timeout
   -w, --workers <n>       Max scenarios running at once (default 1)
+  -s, --set <path=value>  Override any config value (repeatable), e.g. --set groups.checkout.mode=serial
+      --log-level <level> Console logs: debug | info | warn (default) | error | silent
       --no-deps           Do not pull in dependencies of selected scenarios
   -h, --help              Show help
   -v, --version           Show version
@@ -54,6 +56,8 @@ export async function main(argv: string[]): Promise<number> {
         'fail-fast': { type: 'boolean' },
         timeout: { type: 'string' },
         workers: { type: 'string', short: 'w' },
+        set: { type: 'string', short: 's', multiple: true },
+        'log-level': { type: 'string' },
         'plan-format': { type: 'string' },
         explain: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
@@ -92,9 +96,18 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
     const workers = values.workers !== undefined ? Number(values.workers) : undefined;
+    const logLevel = values['log-level'];
+    if (logLevel !== undefined && !['debug', 'info', 'warn', 'error', 'silent'].includes(logLevel)) {
+      throw new UsageError(`--log-level must be debug, info, warn, error or silent (got "${logLevel}")`);
+    }
+    const common = {
+      ...(values.set ? { sets: values.set } : {}),
+      ...(logLevel ? { logLevel: logLevel as 'debug' } : {}),
+    };
     if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) throw new UsageError(`--workers expects a positive integer, got "${values.workers}"`);
     if (command === 'plan') {
       const { plan } = await prepareRun({
+        ...common,
         ...(values.config ? { config: values.config } : {}),
         ...(values.profile ? { profile: values.profile } : {}),
         ...(paths.length ? { paths } : {}),
@@ -115,6 +128,7 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     const outcome = await runBddx({
+      ...common,
       ...(values.config ? { config: values.config } : {}),
       ...(values.profile ? { profile: values.profile } : {}),
       ...(paths.length ? { paths } : {}),

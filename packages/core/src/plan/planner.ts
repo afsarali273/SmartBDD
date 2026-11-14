@@ -138,19 +138,22 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
 
   // --- groups
   const groups = new Map<string, PlanGroup>();
+  const DEFAULT = 'default';
+  const useDefaultGroup = options.defaultMode !== undefined || DEFAULT in configs;
   const ensureGroup = (name: string): PlanGroup => {
     let g = groups.get(name);
     if (!g) {
       const c: GroupConfig = configs[name] ?? {};
       g = {
         name,
-        mode: c.mode ?? 'parallel',
+        mode: c.mode ?? (name === DEFAULT ? options.defaultMode : undefined) ?? 'parallel',
         dependsOn: [...(c.dependsOn ?? [])],
         onDependencyFailure: c.onDependencyFailure ?? 'skip',
         priority: c.priority ?? 0,
         locks: [...(c.locks ?? [])],
         members: [],
         configured: name in configs,
+        ...(name === DEFAULT && !(name in configs) ? { implicit: true } : {}),
         ...(c.workers !== undefined ? { workers: c.workers } : {}),
       };
       groups.set(name, g);
@@ -169,6 +172,7 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
   const ordered = baseOrder(all.filter((s) => included.has(s.id)));
   const nodes: PlanNode[] = ordered.map((s, order) => {
     const f = factsOf(s);
+    if (useDefaultGroup && !f.groups.length) f.groups = [DEFAULT];
     for (const g of f.groups) ensureGroup(g).members.push(s.id);
     const groupPriorities = f.groups.map((g) => configs[g]?.priority).filter((p): p is number => p !== undefined);
     const groupLocks = f.groups.flatMap((g) => configs[g]?.locks ?? []);

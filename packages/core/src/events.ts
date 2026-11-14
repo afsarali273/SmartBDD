@@ -172,11 +172,27 @@ export interface Attachment extends Base {
   body: string;
 }
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+/** Ordered from most to least verbose; 'silent' (consumers only) hides everything. */
+export const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
+
+/** True when a message at `level` should be shown with threshold `threshold`. */
+export function logLevelEnabled(level: LogLevel, threshold: LogLevel | 'silent'): boolean {
+  if (threshold === 'silent') return false;
+  return LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(threshold);
+}
+
 export interface Log extends Base {
   type: 'log';
   scenarioId?: string;
   stepId?: string;
   message: string;
+  /** Default 'info' (events written before levels existed have none). */
+  level?: LogLevel;
+  /** 'user' = steps/hooks/helpers; 'bddx' = the framework's own diagnostics. */
+  source?: 'user' | 'bddx';
+  /** Structured payload (JSON-serialisable), shown by reporters on request. */
+  data?: unknown;
 }
 
 export interface ScenarioFinished extends Base {

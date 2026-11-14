@@ -106,6 +106,25 @@ export default defineConfig({
 });
 ```
 
+Ungrouped scenarios run unconstrained by default; `defaultMode: 'serial'` makes them run one at a time (alongside groups).
+
+Any config value can be overridden from the CLI without editing files:
+
+```bash
+bddx run -p ci --set workers=8 --set groups.checkout.mode=serial --set 'groups.api.dependsOn=["setup"]'
+```
+
+Logging with levels, attributed to the running scenario (also from helpers via the global `log`):
+
+```ts
+import { log } from '@bddx/runtime';
+ctx.log.info('paying', { amount });   // in steps/hooks
+log.warn('gateway slow');             // anywhere, e.g. page objects / API clients
+```
+
+The console shows `warn` and above by default; `--log-level debug` also shows framework scheduling diagnostics.
+Every level is always in the NDJSON event log.
+
 `bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
 
 ```ts

@@ -51,6 +51,7 @@ import { Scope, Store } from './context.js';
 import { DataTable, DocString } from './datatable.js';
 import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
+import { createLogger, setFallbackLogger, withLogger } from './logger.js';
 import { PendingSignal, SkipSignal, withTimeout } from './signals.js';
 import type { CurrentStepInfo, FeatureContext, GroupContext, HookDefinition, RunContext, StepContext } from './types.js';
 
@@ -161,10 +162,15 @@ export class Executor {
       const s = n.scenario;
       inc(this.remaining.features, s.uri);
       if (s.rule) inc(this.remaining.rules, ruleKey(s));
-      for (const g of n.groups) inc(this.remaining.groups, g);
+      for (const g of this.realGroups(n)) inc(this.remaining.groups, g);
     }
 
     const runCtx = this.makeRunContext(this.runScope, {});
+    setFallbackLogger(runCtx.log);
+    this.debug(
+      `plan: ${plan.nodes.length} scenario(s), workers=${plan.workers}, groups=[${[...plan.groups.keys()].join(', ')}]` +
+        `${plan.nodes.some((n) => n.pulledInBy) ? `, ${plan.nodes.filter((n) => n.pulledInBy).length} pulled in as dependencies` : ''}`,
+    );
     if (!this.opts.dryRun) {
       const outcome = await this.runHooks('run', 'before', runCtx, () => true, {});
       if (outcome.status === 'failed') {
@@ -179,6 +185,7 @@ export class Executor {
       {
         runNode: (node, workerId) => this.runNode(node, workerId),
         skipNode: async (node, reason) => {
+          this.debug(`skip ${node.id}: ${reason}`, { scenarioId: node.id });
           this.skipScenario(node.scenario, reason, 'scheduler');
           await this.release(node);
         },
@@ -200,6 +207,7 @@ export class Executor {
       }
     }
 
+    setFallbackLogger(undefined);
     this.summary.durationMs = Date.now() - started;
     const sc = this.summary.scenarios;
     const strict = this.opts.strict ?? true;
@@ -216,11 +224,18 @@ export class Executor {
 
   // ---------------------------------------------------------------- one plan node
 
+  /** Framework diagnostics: `log` events with source 'bddx', level 'debug' (shown with --log-level debug). */
+  private debug(message: string, ids: Emitters = {}): void {
+    this.opts.bus.emit({ type: 'log', level: 'debug', source: 'bddx', message, ...(ids.scenarioId ? { scenarioId: ids.scenarioId } : {}) });
+  }
+
   private async runNode(node: PlanNode, workerId: string): Promise<Status> {
     const s = node.scenario;
+    const waited = node.deps.length ? ` after ${node.deps.map((d) => `${d.target}${d.soft ? '~' : ''}`).join(', ')}` : '';
+    this.debug(`start ${node.id} on ${workerId}${waited}${node.locks.length ? ` holding ${node.locks.join(', ')}` : ''}`, { scenarioId: node.id });
     try {
       const groupStores: Record<string, Store> = {};
-      for (const g of node.groups) {
+      for (const g of this.realGroups(node)) {
         const og = this.openGroup(g);
         const fatal = await og.opened;
         if (fatal) return this.skipScenario(s, fatal, workerId);
@@ -246,7 +261,12 @@ export class Executor {
     const s = node.scenario;
     if (s.rule && dec(this.remaining.rules, ruleKey(s)) === 0) await this.closeRule(s);
     if (dec(this.remaining.features, s.uri) === 0) await this.closeFeature(s.feature);
-    for (const g of node.groups) if (dec(this.remaining.groups, g) === 0) await this.closeGroup(g);
+    for (const g of this.realGroups(node)) if (dec(this.remaining.groups, g) === 0) await this.closeGroup(g);
+  }
+
+  /** Groups with hooks, stores and events (the implicit `default` group only affects scheduling). */
+  private realGroups(node: PlanNode): string[] {
+    return node.groups.filter((g) => !this.plan.groups.get(g)?.implicit);
   }
 
   // ---------------------------------------------------------------- lazily opened scopes
@@ -492,7 +512,7 @@ export class Executor {
       if (step.argument?.kind === 'docString') args.push(new DocString(step.argument.content, step.argument.mediaType));
       const timeout = match.definition.timeoutMs ?? registry.defaultTimeoutMs;
       try {
-        const ret = await withTimeout(`Step "${step.text}"`, timeout, () => match.definition.fn(ctx, ...args));
+        const ret = await withTimeout(`Step "${step.text}"`, timeout, () => withLogger(ctx.log, () => match.definition.fn(ctx, ...args)));
         if (ret === 'pending') status = 'pending';
       } catch (e) {
         ({ status, skipReason } = classify(e));
@@ -561,7 +581,9 @@ export class Executor {
       let error: unknown;
       let skipReason: string | undefined;
       try {
-        await withTimeout(`Hook "${hook.name}"`, hook.timeoutMs ?? registry.defaultTimeoutMs, () => (hook.fn as (c: RunContext) => unknown)(ctx));
+        await withTimeout(`Hook "${hook.name}"`, hook.timeoutMs ?? registry.defaultTimeoutMs, () =>
+          withLogger(ctx.log, () => (hook.fn as (c: RunContext) => unknown)(ctx)),
+        );
       } catch (e) {
         ({ status, skipReason } = classify(e));
         error = e;
@@ -606,10 +628,18 @@ export class Executor {
     const ctx: RunContext = {
       run: scope.store,
       params: this.params,
-      log: (message) => {
+      log: createLogger((level, message, data) => {
         const cur = this.currentIds(ctx);
-        bus.emit({ type: 'log', message, ...(cur.scenarioId ? { scenarioId: cur.scenarioId } : {}), ...(cur.stepId ? { stepId: cur.stepId } : {}) });
-      },
+        bus.emit({
+          type: 'log',
+          level,
+          source: 'user',
+          message,
+          ...(data !== undefined ? { data } : {}),
+          ...(cur.scenarioId ? { scenarioId: cur.scenarioId } : {}),
+          ...(cur.stepId ? { stepId: cur.stepId } : {}),
+        });
+      }),
       attach: (body, mediaType = 'text/plain', name) => {
         const cur = this.currentIds(ctx);
         const binary = typeof body !== 'string';

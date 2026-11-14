@@ -1,5 +1,14 @@
 import { strict as assert } from 'node:assert';
-import { AfterGroup, BeforeGroup, Given, Then, When } from '@bddx/runtime';
+import { AfterGroup, BeforeGroup, Given, Then, When, log } from '@bddx/runtime';
+
+/** A helper outside any step: the global `log` is attributed to the running scenario. */
+const paymentGateway = {
+  async charge(amount: number, method: string) {
+    log.debug('gateway request', { amount, method });
+    if (method === 'wallet') log.warn(`wallet payments are slow in this environment (${amount})`);
+    await sleep(30);
+  },
+};
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const orders: string[] = []; // process-wide fake backend
@@ -19,6 +28,7 @@ When('I log in as {string}', async (ctx, name: string) => {
   const user = ctx.from('create-user').get<{ name: string; id: string }>('user');
   assert.equal(user.name, name);
   await sleep(20);
+  ctx.log.debug('logged in', { user });
   ctx.export('token', `token-for-${user.id}`);
 });
 
@@ -37,8 +47,9 @@ Then('the order is confirmed', (ctx) => {
   assert.ok(orders.includes(ctx.state.get<string>('order')));
 });
 
-When('I pay {int} by {string}', async (_ctx, _amount: number, _method: string) => {
-  await sleep(30);
+When('I pay {int} by {string}', async (ctx, amount: number, method: string) => {
+  ctx.log.info(`paying ${amount} by ${method}`);
+  await paymentGateway.charge(amount, method);
 });
 
 Then('the report lists all orders', (ctx) => {

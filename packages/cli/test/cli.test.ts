@@ -116,6 +116,27 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(alone.out).toContain('no scenario with this id in the plan');
   });
 
+  it('--set overrides any config value (typed), rejects unknown keys', () => {
+    const r = bddxIn(orchestration, 'plan', '-s', 'groups.checkout.mode=serial', '--set', 'workers=7', '-s', 'defaultMode="serial"');
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('Plan: 9 scenario(s), 4 group(s), workers=7');
+    expect(r.out).toContain('group checkout: serial x3');
+    const bad = bddxIn(orchestration, 'plan', '--set', 'wokers=2');
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain('--set: unknown option "wokers"');
+  });
+
+  it('--log-level controls console logs; debug adds CLI and scheduler diagnostics', () => {
+    const quiet = bddxIn(orchestration, 'run', '--name', 'Wallet');
+    expect(quiet.out).toContain('[warn] wallet payments are slow');
+    expect(quiet.out).not.toContain('[info] paying');
+    const loud = bddxIn(orchestration, 'run', '--name', 'Wallet', '--log-level', 'debug');
+    expect(loud.out).toContain('[info] paying 5 by wallet');
+    expect(loud.out).toContain('[bddx:debug] start features/payments.feature::wallet-payment on w1');
+    expect(loud.err).toContain('[bddx:debug] config:');
+    expect(bddxIn(orchestration, 'run', '--log-level', 'chatty').code).toBe(2);
+  });
+
   it('runs the orchestration example green with 4 workers', () => {
     const r = bddxIn(orchestration);
     expect(r.code).toBe(0);
@@ -127,5 +148,20 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(bddx('--bogus').code).toBe(2);
     expect(bddx('-t', '@a and').code).toBe(2);
     expect(bddx('-w', '0').code).toBe(2);
+  });
+});
+
+describe.skipIf(!built)('applySetOverrides', () => {
+  it('parses JSON values, creates nested objects, keeps strings', async () => {
+    const { applySetOverrides } = (await import(new URL('../dist/index.js', import.meta.url).href)) as typeof import('../src/index.js');
+    const base = { params: { a: '1' }, groups: { x: { mode: 'parallel' as const } } };
+    const out = applySetOverrides(base, ['groups.x.workers=3', 'groups.y.dependsOn=["x"]', 'params.url=https://h:8080/p?a=b', 'failFast=true']);
+    expect(out).toEqual({
+      params: { a: '1', url: 'https://h:8080/p?a=b' },
+      groups: { x: { mode: 'parallel', workers: 3 }, y: { dependsOn: ['x'] } },
+      failFast: true,
+    });
+    expect(base.groups.x).toEqual({ mode: 'parallel' }); // input not mutated
+    expect(() => applySetOverrides(base, ['params.a.b=1'])).toThrow(/"a" is not an object/);
   });
 });

@@ -1,4 +1,4 @@
-import type { BddxEvent, PlannedScenario, Status, StepFinished } from '@bddx/core';
+import { logLevelEnabled, type BddxEvent, type Log, type LogLevel, type PlannedScenario, type Status, type StepFinished } from '@bddx/core';
 import type { Reporter, ReporterOptions } from './types.js';
 
 const ICON: Record<Status, string> = {
@@ -19,7 +19,11 @@ export interface ConsoleReporterOptions {
   verbose?: boolean;
   colors?: boolean;
   write?: (text: string) => void;
+  /** Show logs at or above this level: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. */
+  logLevel?: LogLevel | 'silent';
 }
+
+const LEVEL_COLOR: Record<LogLevel, number> = { debug: 90, info: 36, warn: 33, error: 31 };
 
 /** Human-readable console output + final summary + failure details + snippets. */
 export function consoleReporter(raw: ReporterOptions = {}): Reporter {
@@ -29,6 +33,19 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
   const c = (status: Status, text: string) => (useColor ? `\x1b[${COLOR[status]}m${text}\x1b[0m` : text);
   const dim = (text: string) => (useColor ? `\x1b[2m${text}\x1b[0m` : text);
   const style = opts.style ?? 'pretty';
+  const threshold = opts.logLevel ?? 'warn';
+  const scenarioLogs = new Map<string, Log[]>();
+  const fmtLog = (l: Log, indent: string) => {
+    const level = l.level ?? 'info';
+    const tag = `[${l.source === 'bddx' ? `bddx:${level}` : level}]`;
+    const head = useColor ? `\x1b[${LEVEL_COLOR[level]}m${tag}\x1b[0m` : tag;
+    let data = '';
+    if (l.data !== undefined) {
+      const json = JSON.stringify(l.data);
+      data = ` ${dim(json && json.length > 300 ? `${json.slice(0, 300)}…` : String(json))}`;
+    }
+    return `${indent}${head} ${l.message.split('\n').join(`\n${indent}  `)}${data}\n`;
+  };
 
   const plan = new Map<string, PlannedScenario>();
   const steps = new Map<string, StepFinished[]>();
@@ -53,6 +70,16 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
           list.push(e);
           steps.set(e.scenarioId, list);
           if (e.snippet) snippets.add(e.snippet);
+          break;
+        }
+        case 'log': {
+          if (!logLevelEnabled(e.level ?? 'info', threshold)) break;
+          if (e.scenarioId && style === 'pretty') {
+            scenarioLogs.set(e.scenarioId, [...(scenarioLogs.get(e.scenarioId) ?? []), e]);
+          } else if (!e.scenarioId || style === 'progress') {
+            if (style === 'progress' && (e.level ?? 'info') !== 'warn' && e.level !== 'error') break;
+            write(fmtLog(e, style === 'progress' ? '\n' : ''));
+          }
           break;
         }
         case 'hookFinished':
@@ -80,6 +107,8 @@ export function consoleReporter(raw: ReporterOptions = {}): Reporter {
             ? ''
             : dim(ex.source ? ` (${ex.source} row ${ex.sourceRow})` : ` (${ex.name ? `${ex.name} ` : ''}#${ex.index})`);
           write(`  ${c(e.status, ICON[e.status])} ${s.name}${row}${s.ruleName ? dim(` [${s.ruleName}]`) : ''} ${dim(`:${s.line} ${e.durationMs}ms`)}${extra}\n`);
+          for (const l of scenarioLogs.get(e.scenarioId) ?? []) write(fmtLog(l, '      '));
+          scenarioLogs.delete(e.scenarioId);
           if (opts.verbose || (e.status !== 'passed' && e.status !== 'skipped')) {
             const finished = new Map((steps.get(e.scenarioId) ?? []).map((x) => [x.stepId, x]));
             for (const st of s.steps) {

@@ -120,3 +120,32 @@ describe('buildPlan', () => {
     expect(explainNode(plan, 'create')).toContain('Did you mean:\n  create-order');
   });
 });
+
+describe('defaultMode', () => {
+  const src = `Feature: D
+  Scenario: a
+    Given ok
+  Scenario: b
+    Given ok
+  @group:g
+  Scenario: c
+    Given ok
+`;
+  it('puts ungrouped scenarios in an implicit default group with that mode', () => {
+    const s = parseSpec(src, 'd.feature').scenarios;
+    const plan = buildPlan(s, s, { defaultMode: 'serial' });
+    expect(plan.groups.get('default')).toMatchObject({ mode: 'serial', implicit: true, members: ['d.feature::a', 'd.feature::b'] });
+    expect(plan.byId.get('d.feature::c')!.groups).toEqual(['g']);
+    expect(renderPlanText(plan)).toContain('group default (ungrouped scenarios): serial');
+  });
+  it('a configured groups.default is a normal group and also collects ungrouped scenarios', () => {
+    const s = parseSpec(src, 'd.feature').scenarios;
+    const plan = buildPlan(s, s, { groups: { default: { mode: 'parallel', workers: 2 } } });
+    expect(plan.groups.get('default')).toMatchObject({ workers: 2, configured: true });
+    expect(plan.groups.get('default')!.implicit).toBeUndefined();
+  });
+  it('without defaultMode ungrouped scenarios have no group', () => {
+    const s = parseSpec(src, 'd.feature').scenarios;
+    expect(buildPlan(s, s, {}).byId.get('d.feature::a')!.groups).toEqual([]);
+  });
+});

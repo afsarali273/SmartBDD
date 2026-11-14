@@ -221,6 +221,31 @@ the outer scope). A scope never opened (all members skipped before starting) run
 **Exports**: `ctx.export(key, value)` stores a structured clone per scenario; `ctx.from(id).get(key)` returns a clone,
 and throws if that scenario has not finished (hint: add `@dependsOn`) or is not in the plan.
 
+**Ungrouped scenarios**: with `defaultMode` (config/`--set`) or a configured `groups.default`, scenarios without a group
+join the group `default`. From `defaultMode` alone it is *implicit*: it constrains scheduling (e.g. serial) but has no
+hooks, store or group events (`Executor.realGroups`). A configured `groups.default` is a normal group.
+
+## 2d. Configuration sources and precedence
+
+Lowest → highest: built-in defaults → `bddx.config.*` → `--profile <p>` (merged; tags ANDed, params/groups merged by
+key) → `--set path=value` (repeatable, JSON-typed, unknown top-level keys rejected; `applySetOverrides`) → dedicated CLI
+flags (`-t`, `-w`, `-D`, `--log-level`, `--fail-fast`, …). Orchestration facts per scenario come from tags in specs.
+
+## 2e. Logging
+
+- API: `ctx.log(msg)` (= info), `ctx.log.debug|info|warn|error(msg, data?)`; global `log` from `@bddx/runtime` for code
+  outside steps (page objects, API clients). `runtime/src/logger.ts`.
+- Attribution: steps and hooks run inside `withLogger(ctx.log, …)` (AsyncLocalStorage), so the global `log` resolves to
+  the scenario/step/hook running in the current async context, correct under concurrency. Outside: the run-level
+  logger (`setFallbackLogger`), else warn/error go to stderr.
+- Every call → a `log` event `{level, source:'user', message, data?, scenarioId?, stepId?}`; Error data is normalised to
+  `{name, message, stack}`. The framework emits `source:'bddx'` debug diagnostics (plan summary, `start <id> on wN after
+  … holding …`, `skip <id>: reason`). The CLI writes its own pre-run diagnostics (config, --set, counts, support code) to
+  stderr as `[bddx:debug]` at `--log-level debug`.
+- Display: console reporters show logs at or above `logLevel` (default `warn`; `silent` hides all). Scenario logs are
+  buffered and printed under the scenario's result line (stable with concurrency); run-level logs print immediately.
+  NDJSON always contains every log at every level.
+
 ## 3. Event stream (schema v1)
 
 Order for a normal run:

@@ -40,6 +40,12 @@ export interface PlanOptions {
   workers?: number;
   /** Include dependencies of selected scenarios even if not selected. Default true. */
   withDeps?: boolean;
+  /**
+   * How scenarios WITHOUT any group run. Shorthand for `groups.default.mode`.
+   * When set (or when `groups.default` is configured), ungrouped scenarios join the group `default`.
+   * Unset: ungrouped scenarios are unconstrained (parallel up to `workers`).
+   */
+  defaultMode?: GroupMode;
 }
 
 export interface PlanDependency {
@@ -76,6 +82,8 @@ export interface PlanGroup {
   members: string[];
   /** Declared in config (vs. only seen in tags). */
   configured: boolean;
+  /** The automatic `default` group created by `defaultMode`: scheduling only, no hooks/events/store. */
+  implicit?: boolean;
 }
 
 export interface PlanError {

@@ -92,3 +92,33 @@ describe('cucumber-json reporter', () => {
     expect(typeof bad[0]!.result.duration).toBe('number');
   });
 });
+
+describe('console reporter log levels', () => {
+  const logEvents = (consoleOpts: Record<string, unknown>) => {
+    let out = '';
+    const rep = consoleReporter({ colors: false, write: (t: string) => void (out += t), ...consoleOpts });
+    rep.onEvent({ ts: 0, type: 'planReady', scenarios: [{ id: 's', name: 'S', uri: 'x.feature', line: 1, featureName: 'F', tags: [], steps: [] }] });
+    rep.onEvent({ ts: 0, type: 'log', level: 'info', source: 'user', message: 'run-level info' });
+    rep.onEvent({ ts: 0, type: 'log', level: 'debug', source: 'user', message: 'dbg', scenarioId: 's', data: { k: 1 } });
+    rep.onEvent({ ts: 0, type: 'log', level: 'warn', source: 'user', message: 'careful', scenarioId: 's' });
+    rep.onEvent({ ts: 0, type: 'log', level: 'debug', source: 'bddx', message: 'start s on w1', scenarioId: 's' });
+    rep.onEvent({ ts: 0, type: 'scenarioFinished', scenarioId: 's', attempt: 1, status: 'passed', durationMs: 1 });
+    return out;
+  };
+  it('defaults to warn and prints scenario logs under the scenario', () => {
+    const out = logEvents({});
+    expect(out).toContain('✔ S');
+    expect(out).toContain('      [warn] careful');
+    expect(out).not.toContain('dbg');
+    expect(out).not.toContain('run-level info');
+  });
+  it('debug shows everything, framework logs tagged bddx:debug, data inline', () => {
+    const out = logEvents({ logLevel: 'debug' });
+    expect(out).toContain('[info] run-level info');
+    expect(out).toContain('[debug] dbg {"k":1}');
+    expect(out).toContain('[bddx:debug] start s on w1');
+  });
+  it('silent hides logs', () => {
+    expect(logEvents({ logLevel: 'silent' })).not.toContain('careful');
+  });
+});

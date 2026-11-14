@@ -1,5 +1,6 @@
 import type { FeatureInfo, HookKind, HookLevel, RuleRef } from '@bddx/core';
 import type { Cleanup, Store } from './context.js';
+import type { Logger } from './logger.js';
 
 export interface ScenarioInfo {
   id: string;
@@ -31,7 +32,8 @@ export interface RunContext {
   run: Store;
   /** User data from config `params` and CLI `-D key=value`. */
   params: Readonly<Record<string, string>>;
-  log(message: string): void;
+  /** Levelled logger: ctx.log(msg) = info; ctx.log.debug/info/warn/error(msg, data?). */
+  log: Logger;
   attach(body: string | Uint8Array, mediaType?: string, name?: string): void;
   /** Register cleanup for the current scope (LIFO, runs even after failures). */
   defer(fn: Cleanup): void;

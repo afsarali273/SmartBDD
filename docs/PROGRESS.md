@@ -7,8 +7,8 @@ The single source of truth for "where are we". Update it at the end of every wor
 - **Phases 0–1:** done. **Phase 2:** data core done; text composite steps, call-a-scenario, Phase 2 gate remain.
 - **Phase 3:** planner, `bddx plan`/`--explain`, dependency closure, in-process scheduler (workers, priorities, locks,
   serial/parallel/exclusive groups, group caps), group hooks/stores, hard/soft deps, exports, orchestration example. Gate passed.
-  Remaining: worker processes, `@requires`, timeline view.
-- **Health:** `npm run verify` green on the user's Mac (89 tests + both examples).
+  Also: `defaultMode`, `--set` overrides, levelled logging. Remaining: worker processes, `@requires`, timeline view.
+- **Health:** `npm run verify` green on the user's Mac (102 tests + both examples).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 
@@ -102,3 +102,17 @@ Worked directly in the user's folder via device shell.
   `dependencies.feature` (expected.json gained `config`).
 - example: `examples/orchestration` (4 groups, exports, group hooks, exclusive report), npm scripts
   `example:orchestration`, `plan:orchestration`; `verify` runs both examples.
+
+### 2026-11-15: Session 3b (config overrides, defaultMode, logging)
+
+- Owner asked: run parallel + sequential in one command (already true via groups), config from CLI, proper log levels.
+- cli: `-s/--set path=value` (`applySetOverrides`, `OPTION_KEYS`), `--log-level`, config `defaultMode`, `logLevel`;
+  `[bddx:debug]` CLI diagnostics on stderr; console reporters receive the log level (`withLogLevel`).
+- core: `LogLevel`, `LOG_LEVELS`, `logLevelEnabled`; `log` event gains `level`, `source`, `data`; planner `defaultMode`
+  and implicit `default` group (`PlanGroup.implicit`).
+- runtime: `logger.ts` (`createLogger`, global `log`, `withLogger` via AsyncLocalStorage); steps/hooks run inside it;
+  executor framework debug logs; implicit groups excluded from hooks/stores/events.
+- reporters: console buffers scenario logs under the result line, `logLevel` threshold (default warn), data inline.
+- example: orchestration steps log at info/debug/warn incl. a helper using global `log`.
+- tests: logging (3), console levels (3), defaultMode (3 planner + 1 scheduler), CLI `--set`/`--log-level` (2) +
+  `applySetOverrides` unit (1); two older tests now ignore framework logs. 102 total.

@@ -258,7 +258,7 @@ Feature: A
       ctx.attach(new Uint8Array([1, 2, 3]), 'application/octet-stream', 'bytes');
     });
     const { of } = await run(r, scenariosOf(`Feature: x\n  Scenario: s\n    Given note\n`));
-    expect(of('log')[0]).toMatchObject({ message: 'hello', scenarioId: 'f1.feature::s' });
+    expect(of('log').filter((l) => l.source === 'user')[0]).toMatchObject({ message: 'hello', level: 'info', scenarioId: 'f1.feature::s' });
     expect(of('attachment')[0]).toMatchObject({ encoding: 'base64', body: 'AQID', name: 'bytes' });
     expect(of('attachment')[0]!.stepId).toBeDefined();
   });
@@ -281,7 +281,7 @@ Feature: A
     const r = new SupportRegistry();
     r.defineStep('ok', () => {});
     const { events } = await run(r, scenariosOf(`Feature: x\n  Scenario: s\n    Given ok\n`));
-    expect(events.map((e) => e.type)).toEqual([
+    expect(events.filter((e) => e.type !== 'log').map((e) => e.type)).toEqual([
       'runStarted',
       'planReady',
       'featureStarted',
