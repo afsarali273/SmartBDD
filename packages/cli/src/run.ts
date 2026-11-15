@@ -221,6 +221,7 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
     withDeps: req.withDeps ?? true,
     ...(opts.groups ? { groups: opts.groups } : {}),
     ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
+    ...(opts.featureMode ? { featureMode: opts.featureMode } : {}),
   });
   let shardNote: string[] = [];
   if (req.shard) {
@@ -245,6 +246,7 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
       withDeps: false,
       ...(opts.groups ? { groups: opts.groups } : {}),
       ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
+    ...(opts.featureMode ? { featureMode: opts.featureMode } : {}),
     });
     shardNote = [
       `shard ${spec.index}/${spec.count}: ${sh.ids.length} of ${total} scenario(s); estimated load per shard: ${sh.loads.map((l) => `${Math.round(l)}ms`).join(', ')}`,

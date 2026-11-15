@@ -60,6 +60,8 @@ export interface BddxOptions {
   groups?: Record<string, GroupConfig>;
   /** How ungrouped scenarios run: 'parallel' | 'serial' | 'exclusive'. Shorthand for groups.default.mode. */
   defaultMode?: GroupMode;
+  /** 'serial': scenarios inside every feature run one after another in file order (features still run in parallel). Per feature: @serial / @parallel. */
+  featureMode?: 'parallel' | 'serial';
   /**
    * Scenario retry: `{ scenario: 2, delay: '1s', on: ['TimeoutError', '/ECONN/'], failOnFlaky: false }`.
    * `on` entries match the error name exactly or the message as a substring; "/regex/" strings are regular expressions.
@@ -93,7 +95,7 @@ export interface BddxOptions {
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation', 'history', 'plugins',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'featureMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation', 'history', 'plugins',
 ] as const;
 
 /**

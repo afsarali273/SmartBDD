@@ -283,6 +283,40 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
     }
   }
 
+  // --- serial features / rules: each scenario waits for the previous one (soft: it runs whatever that one's result).
+  // Added after selection, so running one scenario never pulls in the others; only selected ones are chained.
+  const featureSerial = (s: ScenarioInstance): boolean => {
+    const ft = s.feature.tags.map((t) => t.key);
+    if (ft.includes('serial') && ft.includes('parallel')) err(`Feature "${s.feature.name}" has both @serial and @parallel`, s);
+    if (ft.includes('serial')) return true;
+    if (ft.includes('parallel')) return false;
+    return options.featureMode === 'serial';
+  };
+  const ruleSerial = (s: ScenarioInstance): boolean => !!s.rule?.tags.some((t) => t.key === 'serial');
+  const misplaced = new Set<string>();
+  const chains = new Map<string, PlanNode[]>();
+  for (const n of nodes) {
+    const s = n.scenario;
+    const own = s.tags.filter((t) => (t.key === 'serial' || t.key === 'parallel') && !s.feature.tags.some((f) => f.name === t.name) && !s.rule?.tags.some((r) => r.name === t.name));
+    for (const t of own) {
+      if (!misplaced.has(`${s.uri}:${t.name}`)) err(`${t.name} belongs on the Feature (or a Rule), not on a scenario`, s);
+      misplaced.add(`${s.uri}:${t.name}`);
+    }
+    const kind = featureSerial(s) ? 'feature' : ruleSerial(s) ? 'rule' : undefined;
+    if (!kind) continue;
+    n.serial = kind;
+    const key = kind === 'feature' ? `f:${s.uri}` : `r:${s.uri}:${s.rule!.id}`;
+    chains.set(key, [...(chains.get(key) ?? []), n]);
+  }
+  for (const chain of chains.values()) {
+    chain.sort((a, b) => a.order - b.order);
+    for (let i = 1; i < chain.length; i++) {
+      const n = chain[i]!;
+      const prev = chain[i - 1]!;
+      if (!n.deps.some((d) => d.target === prev.id)) n.deps.push({ target: prev.id, soft: true, via: `serial:${n.serial}` });
+    }
+  }
+
   // --- cycle detection (iterative DFS, reports one cycle path per strongly connected loop)
   const state = new Map<string, 0 | 1 | 2>();
   const reported = new Set<string>();
@@ -306,7 +340,11 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
           const key = [...cycle].sort().join('|');
           if (!reported.has(key)) {
             reported.add(key);
-            err(`Dependency cycle: ${cycle.join(' -> ')}`, nodeById.get(next)!.scenario);
+            const serial = cycle.slice(1).some((id, i) => nodeById.get(cycle[i]!)!.deps.find((d) => d.target === id)?.via.startsWith('serial:'));
+            err(
+              `Dependency cycle: ${cycle.join(' -> ')}${serial ? ' (a @serial feature or rule runs in file order, so a scenario cannot depend on a later one in it)' : ''}`,
+              nodeById.get(next)!.scenario,
+            );
           }
         }
       } else {

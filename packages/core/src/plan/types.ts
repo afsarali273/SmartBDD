@@ -57,6 +57,12 @@ export interface PlanOptions {
    * Unset: ungrouped scenarios are unconstrained (parallel up to `workers`).
    */
   defaultMode?: GroupMode;
+  /**
+   * How the scenarios INSIDE a feature run. 'parallel' (default): independent. 'serial': one after another in file
+   * order (each waits for the previous one to finish, whatever its result), while different features still run in
+   * parallel and scenarios keep their groups. Per feature: `@serial` / `@parallel` on the Feature (or `@serial` on a Rule).
+   */
+  featureMode?: 'parallel' | 'serial';
 }
 
 export interface PlanDependency {
@@ -84,6 +90,8 @@ export interface PlanNode {
   retry?: number;
   /** Tagged @quarantine. */
   quarantined: boolean;
+  /** Runs in file order within its feature (@serial feature, `featureMode: 'serial'`) or rule (@serial rule). */
+  serial?: 'feature' | 'rule';
 }
 
 export interface PlanGroup {

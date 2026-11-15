@@ -39,6 +39,7 @@ export async function validateProject(req: RunRequest = {}): Promise<ValidationR
     withDeps: true,
     ...(prepared.opts.groups ? { groups: prepared.opts.groups } : {}),
     ...(prepared.opts.defaultMode ? { defaultMode: prepared.opts.defaultMode } : {}),
+    ...(prepared.opts.featureMode ? { featureMode: prepared.opts.featureMode } : {}),
   });
   for (const e of plan.errors) {
     add({ severity: 'error', code: 'plan', message: e.message, ...(e.uri ? { uri: e.uri } : {}), ...(e.line ? { line: e.line } : {}) });
@@ -157,7 +158,7 @@ function hookMatches(hook: HookDefinition, scenarios: readonly ScenarioInstance[
 }
 
 const BUILT_IN_TAG_KEYS = [
-  'id', 'group', 'dependsOn', 'lock', 'priority', 'exclusive', 'data', 'dataField', 'retry', 'noRetry', 'quarantine', 'timeout',
+  'id', 'group', 'dependsOn', 'lock', 'priority', 'exclusive', 'serial', 'parallel', 'data', 'dataField', 'retry', 'noRetry', 'quarantine', 'timeout',
   'stepRetry', 'stepDelay', 'stepTimeout',
 ] as const;
 
@@ -165,6 +166,7 @@ function validateConfig(opts: import('./config.js').BddxOptions, add: (d: Valida
   const error = (message: string) => add({ severity: 'error', code: 'config', message });
   if (opts.pool !== undefined && opts.pool !== 'inline' && opts.pool !== 'process') error(`pool must be inline or process`);
   if (opts.defaultMode !== undefined && !['parallel', 'serial', 'exclusive'].includes(opts.defaultMode)) error(`defaultMode must be parallel, serial or exclusive`);
+  if (opts.featureMode !== undefined && !['parallel', 'serial'].includes(opts.featureMode)) error(`featureMode must be parallel or serial`);
   if (opts.logLevel !== undefined && !['debug', 'info', 'warn', 'error', 'silent'].includes(opts.logLevel)) error(`logLevel must be debug, info, warn, error or silent`);
   for (const [name, value] of [['stepTimeoutMs', opts.stepTimeoutMs], ['scenarioTimeout', opts.scenarioTimeout], ['runTimeout', opts.runTimeout]] as const) {
     if (value === undefined) continue;

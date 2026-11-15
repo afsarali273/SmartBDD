@@ -23,7 +23,7 @@ export function renderPlanText(plan: Plan): string {
       n.quarantined ? 'quarantined' : '',
     ].filter(Boolean);
     out.push(`  ${n.id}${flags.length ? `  ${flags.join(' ')}` : ''}`);
-    for (const d of n.deps) out.push(`      <- ${d.target}${d.soft ? ' (soft)' : ''}`);
+    for (const d of n.deps) out.push(`      <- ${d.target}${d.via.startsWith('serial:') ? ` (${d.via.slice(7)} runs in file order)` : d.soft ? ' (soft)' : ''}`);
   }
   if (plan.errors.length) {
     out.push('', 'Errors:');
