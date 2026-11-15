@@ -37,6 +37,14 @@ describe('destructuredNames', () => {
     expect(destructuredNames((ctx: unknown) => ctx)).toEqual([]);
     expect(destructuredNames(((ctx: unknown) => ctx) as never)).toEqual([]);
     expect(destructuredNames(() => 1)).toEqual([]);
+    expect(destructuredNames(async (ctx: any) => ctx.page.goto(ctx?.params.base))).toEqual(['page', 'params']);
+    expect(destructuredNames(async (ctx: any) => {
+      const { browser, state } = ctx;
+      return [browser, state];
+    })).toEqual(['browser', 'state']);
+    expect(destructuredNames(function (c: any, u: string) { return c.request.get(u); })).toEqual(['request']);
+    expect(destructuredNames(((ctx: any) => ctx.page) as never)).toEqual(['page']);
+    expect(destructuredNames((ctx: any) => (globalThis as any).xctx?.page ?? ctx.state)).toEqual(['state']);
   });
 });
 
@@ -136,9 +144,13 @@ describe('fixtures', () => {
     r.defineFixture('sync', () => 41);
     r.defineFixture('later', async () => (await tick(), 'L'));
     r.defineStep('sync read', (ctx: any) => expect(ctx.sync + 1).toBe(42));
-    r.defineStep('async read', (ctx: any) => ctx.later);
+    r.defineStep('async read', (ctx: any) => {
+      const key = 'later'; // a computed read cannot be seen in the source
+      return ctx[key];
+    });
+    r.defineStep('plain read', async (ctx: any) => expect(ctx.later).toBe('L')); // ctx.later in the body is detected
     r.defineStep('awaited read', async (ctx: StepContext) => expect(await ctx.fixture('later')).toBe('L'));
-    const { failures } = await run(r, 'Feature: F\n  Scenario: a\n    Given sync read\n    And awaited read\n  Scenario: b\n    Given async read\n');
+    const { failures } = await run(r, 'Feature: F\n  Scenario: a\n    Given sync read\n    And awaited read\n    And plain read\n  Scenario: b\n    Given async read\n');
     expect(failures).toHaveLength(1);
     expect(failures[0]).toContain('Fixture "later" is asynchronous');
     expect(failures[0]).toContain('({ later }) =>');

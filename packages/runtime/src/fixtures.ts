@@ -42,6 +42,8 @@ export interface FixtureTeardownContext {
   /** The scenario's final status (scenario fixtures only), e.g. to keep a screenshot or trace only when it failed. */
   status?: 'passed' | 'failed' | 'skipped' | 'pending' | 'undefined' | 'ambiguous';
   error?: unknown;
+  /** The context the fixture was created with: `ctx.attach(...)` / `ctx.log(...)` land in the scenario (or the run). */
+  ctx: RunContext | StepContext;
 }
 
 export type ScenarioFixtureSetup<T> = (ctx: StepContext & Fixtures) => T | Promise<T>;
@@ -79,8 +81,12 @@ export class FixtureNotReady extends Error {
 const cache = new WeakMap<object, string[]>();
 
 /**
- * Names destructured in the FIRST parameter of a function: `async ({ page, login: l, x = 1 }, a) => ...` -> page, login, x.
- * Returns [] for a plain parameter (`ctx => ...`), `...rest`, or anything it cannot read.
+ * Fixture names a function asks for through its FIRST parameter:
+ *   `async ({ page, login: l, x = 1 }, a) => ...`  -> page, login, x   (destructuring)
+ *   `async (ctx) => ctx.page.goto(...)`             -> page             (property reads on the parameter)
+ *   `(ctx) => { const { page } = ctx; ... }`        -> page
+ * Only names that are defined fixtures are used, so `ctx.state` and friends are ignored. A fixture read inside an
+ * `if` is created even when the branch does not run.
  */
 export function destructuredNames(fn: (...a: never[]) => unknown): string[] {
   const hit = cache.get(fn);
@@ -91,30 +97,46 @@ export function destructuredNames(fn: (...a: never[]) => unknown): string[] {
 }
 
 function parse(src: string): string[] {
-  let s = src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+  const s = src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
   const open = s.indexOf('(');
   const arrow = s.indexOf('=>');
-  if (open < 0 || (arrow >= 0 && arrow < open)) return []; // `x => ...`
-  s = s.slice(open + 1).trimStart();
-  if (!s.startsWith('{')) return [];
+  // `ctx => ...` (no parentheses)
+  if (open < 0 || (arrow >= 0 && arrow < open)) {
+    const m = /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/.exec(s);
+    return m ? uses(s.slice(arrow + 2), m[1]!) : [];
+  }
+  const rest = s.slice(open + 1);
+  const first = rest.trimStart();
+  if (first.startsWith('{')) {
+    const end = matching(first, 0);
+    return end < 0 ? [] : keysOf(first.slice(1, end));
+  }
+  // `(ctx, a) => ...` / `function (ctx)`: look for ctx.name and `const { name } = ctx` in the body
+  const m = /^([A-Za-z_$][\w$]*)/.exec(first);
+  if (!m) return [];
+  const close = matching(s, open);
+  return close < 0 ? [] : uses(s.slice(close + 1), m[1]!);
+}
+
+/** Index of the bracket closing the one at `from`, or -1. */
+function matching(s: string, from: number): number {
   let depth = 0;
-  let end = -1;
-  for (let i = 0; i < s.length; i++) {
+  for (let i = from; i < s.length; i++) {
     const c = s[i];
     if (c === '{' || c === '[' || c === '(') depth++;
     else if (c === '}' || c === ']' || c === ')') {
       depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
+      if (depth === 0) return i;
     }
   }
-  if (end < 0) return [];
-  const body = s.slice(1, end);
+  return -1;
+}
+
+/** Property names in a destructuring pattern body: `page, login: l, x = 1, ...rest` -> page, login, x. */
+function keysOf(body: string): string[] {
   const parts: string[] = [];
   let cur = '';
-  depth = 0;
+  let depth = 0;
   for (const c of body) {
     if (c === '{' || c === '[' || c === '(') depth++;
     if (c === '}' || c === ']' || c === ')') depth--;
@@ -131,6 +153,15 @@ function parse(src: string): string[] {
     .filter((p) => /^[A-Za-z_$][\w$]*$/.test(p));
 }
 
+/** `ctx.page`, `ctx?.page`, `const { page } = ctx` in a function body. */
+function uses(body: string, param: string): string[] {
+  const names = new Set<string>();
+  const id = param.replace(/\$/g, '\\$');
+  for (const m of body.matchAll(new RegExp(`(?<![\\w$.])${id}\\??\\.([A-Za-z_$][\\w$]*)`, 'g'))) names.add(m[1]!);
+  for (const m of body.matchAll(new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${id}(?![\\w$])`, 'g'))) for (const k of keysOf(m[1]!)) names.add(k);
+  return [...names];
+}
+
 // ------------------------------------------------------------------ caches
 
 interface Entry {
@@ -142,7 +173,7 @@ interface Entry {
 /** Values of one scope (one scenario attempt, or one worker process). */
 export class FixtureCache {
   private readonly entries = new Map<string, Entry>();
-  private readonly order: Array<{ def: FixtureDefinition; value: unknown }> = [];
+  private readonly order: Array<{ def: FixtureDefinition; value: unknown; ctx: RunContext | StepContext }> = [];
   private closed = false;
 
   constructor(readonly scope: FixtureScope) {}
@@ -155,7 +186,7 @@ export class FixtureCache {
     return this.entries.get(name)?.value;
   }
 
-  get(def: FixtureDefinition, create: () => unknown): unknown {
+  get(def: FixtureDefinition, ctx: RunContext | StepContext, create: () => unknown): unknown {
     if (this.closed) throw new Error(`Fixture "${def.name}" requested after its ${this.scope} scope ended`);
     const e = this.entries.get(def.name);
     if (e?.ready) return e.value;
@@ -175,7 +206,7 @@ export class FixtureCache {
           entry.value = v;
           entry.ready = true;
           delete entry.promise;
-          this.order.push({ def, value: v });
+          this.order.push({ def, value: v, ctx });
           return v;
         },
         (err: unknown) => {
@@ -187,20 +218,20 @@ export class FixtureCache {
     }
     entry.value = out;
     entry.ready = true;
-    this.order.push({ def, value: out });
+    this.order.push({ def, value: out, ctx });
     return out;
   }
 
   /** Tear down in reverse creation order. Returns the errors. */
-  async close(info: FixtureTeardownContext = {}): Promise<unknown[]> {
+  async close(info: Omit<FixtureTeardownContext, 'ctx'> = {}): Promise<unknown[]> {
     this.closed = true;
     // wait for setups still in flight, so nothing leaks
     await Promise.allSettled([...this.entries.values()].flatMap((e) => (e.promise ? [e.promise] : [])));
     const errors: unknown[] = [];
-    for (const { def, value } of this.order.reverse()) {
+    for (const { def, value, ctx } of this.order.reverse()) {
       if (!def.teardown) continue;
       try {
-        await def.teardown(value as never, info);
+        await def.teardown(value as never, { ...info, ctx });
       } catch (e) {
         errors.push(e);
       }
@@ -252,7 +283,7 @@ export function resolveFixture(ctx: Ctx, name: string, chain: string[] = []): un
   const target = def.scope === 'worker' ? h.worker : scenarioCache!;
   if (target.has(name)) return target.peek(name);
   const setupCtx: Ctx = def.scope === 'worker' ? h.workerContext() : ctx;
-  return target.get(def, () => {
+  return target.get(def, setupCtx as RunContext, () => {
     const deps = def.deps.filter((d) => h.definitions.has(d));
     const pending = deps.map((d) => resolveFixture(setupCtx, d, [...chain, name]));
     const run = () => (def.setup as (c: unknown) => unknown)(setupCtx);

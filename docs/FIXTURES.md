@@ -87,3 +87,10 @@ export default defineConfig({ plugins: ['@bddx/playwright', ['./support/db.plugi
 
 `setup` runs once per process (main and every worker process) before step files load. Package names resolve from the
 config folder; paths starting with `.` are relative to it. A missing plugin is a usage error (exit 2).
+
+## Available plugins
+
+- `plugins/playwright` (`@bddx/playwright`): `playwright`, `browser` (worker), `context`, `page`, `request` (scenario);
+  screenshots, traces and videos by `'off' | 'on' | 'only-on-failure'`; `-D browser= / headed= / baseURL=` overrides.
+  A standalone package (not a bddx workspace): Playwright is its peer dependency, never bddx's. Offline example in
+  `plugins/playwright/example`. See its README.
