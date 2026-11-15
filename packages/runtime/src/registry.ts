@@ -1,4 +1,5 @@
 import { createCucumberExpressionEngine } from './adapters/cucumber-expressions.js';
+import { destructuredNames, RESERVED, type FixtureDefinition, type FixtureOptions } from './fixtures.js';
 import type { CompiledStepPattern, ParameterTypeOptions, StepExpressionEngine } from './ports.js';
 import { compileTagExpression, createIdGenerator, type HookKind, type HookLevel, type StepInstance, type TagPredicate } from '@bddx/core';
 import type {
@@ -111,6 +112,30 @@ export class SupportRegistry {
     if (location) hook.location = location;
     this.hooks.push(hook);
     return hook;
+  }
+
+  readonly fixtureDefinitions = new Map<string, FixtureDefinition>();
+
+  defineFixture<T>(name: string, setup: (ctx: never) => T | Promise<T>, options: FixtureOptions<T> = {}, location?: string): FixtureDefinition {
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) throw new Error(`Fixture name "${name}" must be a valid identifier (it becomes ctx.${name})`);
+    if (RESERVED.has(name)) throw new Error(`Fixture name "${name}" is reserved: ctx.${name} already exists`);
+    if (typeof setup !== 'function') throw new Error(`Fixture "${name}" needs a setup function`);
+    const scope = options.scope ?? 'scenario';
+    if (scope !== 'scenario' && scope !== 'worker') throw new Error(`Fixture "${name}": scope must be 'scenario' or 'worker' (got "${String(scope)}")`);
+    const existing = this.fixtureDefinitions.get(name);
+    if (existing) {
+      throw new Error(`Fixture "${name}" is defined twice${existing.location ? ` (first at ${existing.location})` : ''}${location ? ` (again at ${location})` : ''}`);
+    }
+    const def: FixtureDefinition = {
+      name,
+      scope,
+      setup: setup as FixtureDefinition['setup'],
+      deps: destructuredNames(setup as never),
+      ...(options.teardown ? { teardown: options.teardown as FixtureDefinition['teardown'] } : {}),
+      ...(location ? { location } : {}),
+    };
+    this.fixtureDefinitions.set(name, def);
+    return def;
   }
 
   defineParameterType<T>(opts: ParameterTypeOptions<T>): void {

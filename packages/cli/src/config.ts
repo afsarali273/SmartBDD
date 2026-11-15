@@ -18,6 +18,9 @@ import type { GroupConfig, GroupMode, LogLevel } from '@bddx/core';
  * All globs are relative to the config file's folder.
  * Phase 3 adds `groups`, phase 4 adds `retry`.
  */
+/** A plugin module name or path, optionally with options, or a plugin object. */
+export type PluginSpec = string | [string, Record<string, unknown>] | { name: string; setup(options: Record<string, unknown>): unknown };
+
 export interface BddxOptions {
   /** Spec globs. Default: features/**\/*.feature and features/**\/*.feature.md */
   features?: string | string[];
@@ -74,6 +77,12 @@ export interface BddxOptions {
    * (relative to the config folder), keeping the last 50 runs. Dry runs are never recorded.
    */
   history?: boolean | { dir?: string; keep?: number };
+  /**
+   * Plugins (Playwright, Selenium, HTTP ...): packages or files whose default export is `definePlugin({ name, setup })`.
+   * Loaded before the step files, in every process. `'@bddx/playwright'`, `['./support/db.plugin.ts', { url: '...' }]`.
+   * Resolved from the config folder, so the plugin is a dependency of YOUR project, never of bddx.
+   */
+  plugins?: PluginSpec[];
   /** Optional governance for `bddx validate`. Built-in orchestration/data tags are always allowed. */
   validation?: {
     /** Custom tag keys allowed by the project, without `@` (for example `smoke`, `owner`). */
@@ -84,7 +93,7 @@ export interface BddxOptions {
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation', 'history',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation', 'history', 'plugins',
 ] as const;
 
 /**

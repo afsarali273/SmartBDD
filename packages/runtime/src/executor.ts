@@ -56,6 +56,7 @@ import { schedule } from './scheduler.js';
 import { WorkerCrashedError, WorkerInitError, type CloseResult, type NodeRequest, type NodeResult, type RemotePool, type ScopeRef, type WorkerExecutor } from './pool.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
 import type { DebugController, DebugStepView } from './debug.js';
+import { callWithFixtures, FixtureCache, installFixtures, type FixtureHost } from './fixtures.js';
 import { abortError, abortableSleep, PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
 import type {
   CurrentStepInfo,
@@ -63,6 +64,7 @@ import type {
   GroupContext,
   HookDefinition,
   RunContext,
+  RunContextBase,
   SoftAssert,
   StepContext,
   StepRetryOption,
@@ -157,6 +159,10 @@ export class Executor implements WorkerExecutor {
   private readonly groupAttempts = new Map<string, number>();
   // populated per run
   private runScope = new Scope('run');
+  /** Worker-scoped fixtures of this process. */
+  private readonly workerFixtures = new FixtureCache('worker');
+  private workerFixtureCtx: RunContext | undefined;
+  private readonly fixtureHost: FixtureHost;
   private plan!: Plan;
   private readonly features = new Map<string, OpenScope>();
   private readonly rules = new Map<string, OpenScope>();
@@ -171,6 +177,11 @@ export class Executor implements WorkerExecutor {
   constructor(private readonly opts: ExecuteOptions) {
     this.params = Object.freeze({ ...(opts.params ?? {}) });
     this.signal = opts.signal ?? new AbortController().signal;
+    this.fixtureHost = {
+      definitions: opts.registry.fixtureDefinitions,
+      worker: this.workerFixtures,
+      workerContext: () => (this.workerFixtureCtx ??= this.makeRunContext(this.runScope, {})),
+    };
   }
 
   async execute(scenarios: readonly ScenarioInstance[]): Promise<ExecuteResult> {
@@ -272,6 +283,11 @@ export class Executor implements WorkerExecutor {
         if (w.status === 'failed') {
           this.runFailed = true;
           this.runError ??= w.error;
+        }
+        const fx = await this.closeWorkerFixtures();
+        if (fx) {
+          this.runFailed = true;
+          this.runError ??= fx;
         }
       }
       const after = await this.runHooks('run', 'after', runCtx, () => true, {});
@@ -669,6 +685,13 @@ export class Executor implements WorkerExecutor {
     }
   }
 
+  /** Tear down worker fixtures (after AfterWorker hooks). Returns the first error, reported like a hook failure. */
+  private async closeWorkerFixtures(): Promise<unknown> {
+    const errors = await this.workerFixtures.close();
+    if (errors.length) this.emitHookLikeError('worker', 'after', 'worker fixture teardown', errors[0], {});
+    return errors[0];
+  }
+
   // ---------------------------------------------------------------- worker mode (inside a worker process)
 
   /** Worker process start: seed the run store, BeforeWorker hooks. */
@@ -763,6 +786,7 @@ export class Executor implements WorkerExecutor {
     const runCtx = this.makeRunContext(this.runScope, {});
     const w = await this.runHooks('worker', 'after', runCtx, () => true, {});
     if (w.status === 'failed') this.runFailed = true;
+    if (await this.closeWorkerFixtures()) this.runFailed = true;
     const cleanupErrors = await this.runScope.close();
     if (cleanupErrors.length) {
       this.runFailed = true;
@@ -796,6 +820,8 @@ export class Executor implements WorkerExecutor {
     bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt, workerId });
 
     const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids, groupStores, signal);
+    const fixtures = new FixtureCache('scenario');
+    installFixtures(ctx, this.fixtureHost, fixtures);
     const statuses: Status[] = [];
     let error: unknown;
     let skipReason: string | undefined;
@@ -848,6 +874,13 @@ export class Executor implements WorkerExecutor {
         error ??= cleanupErrors[0];
         this.emitHookLikeError('scenario', 'after', 'scenario cleanup (defer)', cleanupErrors[0], ids);
       }
+    }
+    // Fixtures outlive everything that may use them (steps, After hooks, ctx.defer, dispose()).
+    const fixtureErrors = await fixtures.close({ status: worstStatus(statuses), ...(error !== undefined ? { error } : {}) });
+    if (fixtureErrors.length) {
+      statuses.push('failed');
+      error ??= fixtureErrors[0];
+      this.emitHookLikeError('scenario', 'after', 'fixture teardown', fixtureErrors[0], ids);
     }
 
     // Dry run: every matched step is reported 'skipped', so the scenario is 'skipped' unless something is undefined/ambiguous.
@@ -1045,7 +1078,7 @@ export class Executor implements WorkerExecutor {
           const ret = await withTimeout(
             scenarioCapped ? `Scenario "${scenario.name}" (time budget ${scenarioTimeoutMs} ms) at step "${text}"` : `Step "${text}"${mode ? ` (${mode} ${n}/${total})` : ''}`,
             t,
-            () => withLogger(actx.log, () => m.definition.fn(actx, ...args)),
+            () => withLogger(actx.log, () => callWithFixtures(actx, m.definition.fn as never, args)),
             actx.signal,
           );
           if (ret === 'pending') st = 'pending';
@@ -1272,7 +1305,7 @@ export class Executor implements WorkerExecutor {
         await withTimeout(
           `Hook "${hook.name}"`,
           this.opts.debug ? 0 : (hook.timeoutMs ?? registry.defaultTimeoutMs),
-          () => withLogger(ctx.log, () => (hook.fn as (c: RunContext) => unknown)(ctx)),
+          () => withLogger(ctx.log, () => callWithFixtures(ctx, hook.fn as never, [])),
           kind === 'before' ? ctx.signal : undefined,
         );
       } catch (e) {
@@ -1316,7 +1349,7 @@ export class Executor implements WorkerExecutor {
 
   private makeRunContext(scope: Scope, ids: Emitters, signal: AbortSignal = this.signal): RunContext {
     const bus = this.opts.bus;
-    const ctx: RunContext = {
+    const base: RunContextBase = {
       run: scope.store,
       params: this.params,
       signal,
@@ -1347,7 +1380,11 @@ export class Executor implements WorkerExecutor {
         });
       },
       defer: (fn) => scope.defer(fn),
+      fixture: () => Promise.reject(new Error('fixtures not installed')), // replaced by installFixtures
     };
+    // Fixture getters (ctx.page ...) are added by installFixtures.
+    const ctx = base as RunContext;
+    installFixtures(ctx, this.fixtureHost);
     this.idsByCtx.set(ctx, ids);
     return ctx;
   }

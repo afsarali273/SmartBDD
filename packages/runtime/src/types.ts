@@ -1,6 +1,7 @@
 import type { FeatureInfo, HookKind, HookLevel, RuleRef } from '@bddx/core';
 import type { Cleanup, Store } from './context.js';
 import type { Logger } from './logger.js';
+import type { Fixtures } from './fixtures.js';
 
 export interface ScenarioInfo {
   id: string;
@@ -36,7 +37,11 @@ export interface CurrentStepInfo {
 export type StepRetryOption = number | { attempts: number; delay?: number | string; backoff?: number };
 
 /** Context for run-level hooks (BeforeAll / AfterAll). */
-export interface RunContext {
+/** Context for run-level hooks, plus every fixture (`ctx.page` ...; see `Fixtures`). */
+export interface RunContext extends RunContextBase, Fixtures {}
+
+/** The run context without fixtures. */
+export interface RunContextBase {
   /** Run-scoped store, shared by everything in this process. */
   run: Store;
   /** User data from config `params` and CLI `-D key=value`. */
@@ -48,6 +53,9 @@ export interface RunContext {
   attach(body: string | Uint8Array, mediaType?: string, name?: string): void;
   /** Register cleanup for the current scope (LIFO, runs even after failures). */
   defer(fn: Cleanup): void;
+  /** Create (or get) a fixture by name. Usually you destructure it instead: `async ({ page }) => ...`. */
+  fixture<K extends keyof Fixtures>(name: K): Promise<Fixtures[K]>;
+  fixture<T = unknown>(name: string): Promise<T>;
 }
 
 /** Context for group-level hooks (BeforeGroup / AfterGroup). */

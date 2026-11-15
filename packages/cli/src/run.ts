@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { glob } from 'tinyglobby';
 import {
   EventBus,
@@ -34,7 +35,7 @@ import {
 import { createDebugController, terminalIO, type DebugIO } from './debug.js';
 import { CancellationError, Executor, ProcessPool, TimeoutError, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
 import { CONSOLE_REPORTERS, createReporter, renderLivingDocs, type Reporter, type ReporterSpec } from '@bddx/reporters';
-import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
+import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions, type PluginSpec } from './config.js';
 
 export interface RunRequest {
   cwd?: string;
@@ -264,6 +265,44 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   return { rootDir, opts, rerunIds, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
 }
 
+const loadedPlugins = new Set<string>();
+
+/** Import and set up plugins (once per process). Module specs resolve from the project folder. */
+async function loadPlugins(rootDir: string, specs: PluginSpec[]): Promise<string[]> {
+  const names: string[] = [];
+  const req = createRequire(resolve(rootDir, 'package.json'));
+  for (const spec of specs) {
+    const [ref, options] = Array.isArray(spec) ? spec : [spec, {}];
+    let plugin: { name: string; setup(o: Record<string, unknown>): unknown };
+    let key: string;
+    if (typeof ref === 'string') {
+      let file: string;
+      try {
+        file = ref.startsWith('.') || isAbsolute(ref) ? resolve(rootDir, ref) : req.resolve(ref);
+      } catch {
+        throw new UsageError(`plugin "${ref}" not found. Install it in your project (npm i -D ${ref}) or fix the path in "plugins".`);
+      }
+      const mod = (await import(pathToFileURL(file).href)) as { default?: unknown; plugin?: unknown };
+      const p = (mod.default ?? mod.plugin) as typeof plugin | undefined;
+      if (!p || typeof p.setup !== 'function') throw new UsageError(`plugin "${ref}" has no default export created with definePlugin({ name, setup })`);
+      plugin = p;
+      key = file;
+    } else {
+      plugin = ref as typeof plugin;
+      key = `object:${plugin.name}`;
+    }
+    names.push(plugin.name);
+    if (loadedPlugins.has(key)) continue;
+    loadedPlugins.add(key);
+    try {
+      await plugin.setup(options ?? {});
+    } catch (e) {
+      throw new UsageError(`plugin "${plugin.name}" failed to set up: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return names;
+}
+
 /** Debugging is one scenario at a time in this process, with nothing that fires while you think. */
 export function forDebugging(opts: BddxOptions): BddxOptions {
   const { scenarioTimeout: _s, runTimeout: _r, retry: _re, ...rest } = opts;
@@ -480,10 +519,14 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
 /** Support code: steps, hooks, parameter types. They register on the global registry. */
 export async function loadSupportCode(rootDir: string, opts: BddxOptions, quiet = false) {
   const registry = getGlobalRegistry();
+  const plugins = await loadPlugins(rootDir, opts.plugins ?? []);
   const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
   for (const f of supportFiles) await import(pathToFileURL(f).href);
   if (!quiet) {
-    cliDebug(opts.logLevel, [`support code: ${supportFiles.length} file(s), ${registry.stepDefinitions.length} step(s), ${registry.hookDefinitions.length} hook(s)`]);
+    cliDebug(opts.logLevel, [
+      ...(plugins.length ? [`plugins: ${plugins.join(', ')}`] : []),
+      `support code: ${supportFiles.length} file(s), ${registry.stepDefinitions.length} step(s), ${registry.hookDefinitions.length} hook(s), ${registry.fixtureDefinitions.size} fixture(s)`,
+    ]);
   }
   if (opts.stepTimeoutMs !== undefined) registry.defaultTimeoutMs = opts.stepTimeoutMs;
   return registry;

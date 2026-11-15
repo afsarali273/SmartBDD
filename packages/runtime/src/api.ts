@@ -10,6 +10,7 @@
  * Every function writes to the global SupportRegistry (see registry.ts).
  */
 import { callerLocation, getGlobalRegistry, type ParameterTypeOptions } from './registry.js';
+import type { Fixtures, FixtureOptions } from './fixtures.js';
 import { hookDecorator, staticHookDecorator, stepDecorator, type MethodDecorator } from './decorators.js';
 import type {
   FeatureHookFn,
@@ -20,6 +21,8 @@ import type {
   ScenarioHookFn,
   StepFn,
   StepOptions,
+  RunContext,
+  StepContext,
 } from './types.js';
 import type { HookKind, HookLevel } from '@bddx/core';
 
@@ -107,6 +110,43 @@ export const BeforeSuite = BeforeAll;
 export const AfterSuite = AfterAll;
 export const BeforeScenario = Before;
 export const AfterScenario = After;
+
+type FixtureType<K> = K extends keyof Fixtures ? Fixtures[K] : unknown;
+
+/**
+ * Define a fixture: a named value created on first use and torn down at the end of its scope.
+ *   defineFixture('page', async ({ browser }) => browser.newPage(), { teardown: (p) => p.close() });
+ *   defineFixture('browser', () => chromium.launch(), { scope: 'worker', teardown: (b) => b.close() });
+ * See fixtures.ts for scopes and the ways to request one.
+ */
+export function defineFixture<K extends string, T = FixtureType<K>>(
+  name: K,
+  setup: (ctx: RunContext) => T | Promise<T>,
+  options: FixtureOptions<T> & { scope: 'worker' },
+): void;
+export function defineFixture<K extends string, T = FixtureType<K>>(
+  name: K,
+  setup: (ctx: StepContext) => T | Promise<T>,
+  options?: FixtureOptions<T> & { scope?: 'scenario' },
+): void;
+export function defineFixture(name: string, setup: (ctx: never) => unknown, options: FixtureOptions<unknown> = {}): void {
+  getGlobalRegistry().defineFixture(name, setup, options, callerLocation());
+}
+
+/**
+ * A plugin bundles fixtures, hooks, steps and parameter types (Playwright, Selenium, HTTP ...). bddx itself depends
+ * on none of them. Enable one in the config: `plugins: ['@bddx/playwright', ['./support/my-plugin.ts', { opt: 1 }]]`.
+ * `setup` runs once per process (the main process and every worker process) before the step files load.
+ */
+export interface BddxPlugin<O = Record<string, unknown>> {
+  name: string;
+  setup(options: O): void | Promise<void>;
+}
+
+export function definePlugin<O = Record<string, unknown>>(plugin: BddxPlugin<O>): BddxPlugin<O> {
+  if (!plugin || typeof plugin.setup !== 'function' || !plugin.name) throw new Error('definePlugin needs { name, setup(options) }');
+  return plugin;
+}
 
 export function defineParameterType<T>(options: ParameterTypeOptions<T>): void {
   getGlobalRegistry().defineParameterType(options);
