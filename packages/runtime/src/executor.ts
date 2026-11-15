@@ -55,6 +55,7 @@ import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
 import { WorkerCrashedError, WorkerInitError, type CloseResult, type NodeRequest, type NodeResult, type RemotePool, type ScopeRef, type WorkerExecutor } from './pool.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
+import type { DebugController, DebugStepView } from './debug.js';
 import { abortError, abortableSleep, PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
 import type {
   CurrentStepInfo,
@@ -68,6 +69,8 @@ import type {
 } from './types.js';
 
 export interface ExecuteOptions {
+  /** Interactive debugging: pause before steps / after failures. Disables scenario and group retries. */
+  debug?: DebugController;
   registry: SupportRegistry;
   bus: EventBus;
   /** Execution plan (groups, dependencies, workers). Default: built from scenario tags, workers = 1. */
@@ -785,7 +788,7 @@ export class Executor implements WorkerExecutor {
     const { bus } = this.opts;
     const started = Date.now();
     this.exportsById.delete(scenario.id); // exports belong to the attempt that produced them
-    const timeoutMs = scenarioTimeout(scenario) ?? this.opts.scenarioTimeoutMs;
+    const timeoutMs = this.opts.debug ? undefined : (scenarioTimeout(scenario) ?? this.opts.scenarioTimeoutMs);
     const deadline = timeoutMs ? started + timeoutMs : undefined;
     const scope = new Scope('scenario');
     const tagNames = scenario.tags.map((t) => t.name);
@@ -861,6 +864,7 @@ export class Executor implements WorkerExecutor {
 
   /** Scenario retry decision: attempts left (tag/group/config), error filter, custom analyzer. */
   private async shouldRetry(s: ScenarioInstance, node: PlanNode | undefined, attempt: number, error: unknown): Promise<boolean> {
+    if (this.opts.debug) return false; // a debugging session never re-runs scenarios behind your back
     const max = node?.retry ?? this.opts.retry?.scenario ?? 0;
     if (attempt > max) return false;
     const info = error === undefined ? undefined : toErrorInfo(error);
@@ -901,7 +905,7 @@ export class Executor implements WorkerExecutor {
    */
   private async settleGroup(name: string): Promise<string[] | undefined> {
     const g = this.plan.groups.get(name);
-    if (!g || !g.retry) return undefined;
+    if (!g || !g.retry || this.opts.debug) return undefined;
     const used = this.groupAttempts.get(name) ?? 1;
     const notPassed = g.members.filter((id) => this.statuses.get(id) !== 'passed');
     if (!notPassed.length || used > g.retry || this.stopReason) return undefined;
@@ -980,6 +984,10 @@ export class Executor implements WorkerExecutor {
     }
     const definition = { pattern: String(match.definition.pattern), ...(match.definition.location ? { location: match.definition.location } : {}) };
     if (blocked) return finish('skipped', { definition });
+    if (this.opts.debug?.beforeStep && !this.signal.aborted) {
+      const go = await this.opts.debug.beforeStep(this.debugView(step, scenario, ctx));
+      if (go === 'quit') return finish('skipped', { definition, skipReason: 'debug session ended' });
+    }
 
     // ---- repeat / retry policy: step tags (incl. scenario @stepRetry…) > step definition `retry` option
     const run = step.run ?? {};
@@ -989,7 +997,7 @@ export class Executor implements WorkerExecutor {
     const mode: 'repeat' | 'retry' | undefined = run.repeat !== undefined ? 'repeat' : retries > 0 ? 'retry' : undefined;
     const baseDelay = run.delayMs ?? defRetry.delayMs ?? 0;
     const backoff = run.backoff ?? defRetry.backoff ?? 1;
-    const stepTimeout = run.timeoutMs ?? match.definition.timeoutMs ?? registry.defaultTimeoutMs;
+    const stepTimeout = this.opts.debug ? 0 : (run.timeoutMs ?? match.definition.timeoutMs ?? registry.defaultTimeoutMs);
     // A scenario @timeout caps every attempt to the time left.
     const budget = () => (deadline ? Math.max(1, deadline - Date.now()) : Infinity);
     const timeoutFor = () => {
@@ -1114,6 +1122,17 @@ export class Executor implements WorkerExecutor {
         delay = Math.round(delay * backoff);
       }
     }
+    if (this.opts.debug?.onFailure && status === 'failed' && before.status === 'passed' && !this.signal.aborted) {
+      for (;;) {
+        const act = await this.opts.debug.onFailure({ ...this.debugView(step, scenario, ctx), status, error });
+        if (act !== 'retry' || this.signal.aborted) break;
+        const r = await attemptOnce(total);
+        status = r.status;
+        error = r.error;
+        skipReason = r.skipReason;
+        if (status !== 'failed') break;
+      }
+    }
     const after = await this.runHooks('step', 'after', ctx, outer, ids);
     if (after.status === 'failed' && status === 'passed') {
       status = 'failed';
@@ -1125,6 +1144,29 @@ export class Executor implements WorkerExecutor {
       ...(skipReason ? { skipReason } : {}),
       ...(mode ? { attempts: attemptsRun, mode } : {}),
     });
+  }
+
+  private debugView(step: StepInstance, scenario: ScenarioInstance, ctx: StepContext): DebugStepView {
+    return {
+      scenario: {
+        id: scenario.id,
+        name: scenario.name,
+        uri: scenario.uri,
+        line: scenario.line,
+        tags: scenario.tags.map((t) => t.name),
+        ...(scenario.example ? { example: scenario.example.values } : {}),
+      },
+      step: {
+        index: scenario.steps.indexOf(step) + 1,
+        total: scenario.steps.length,
+        id: step.id,
+        keyword: step.keyword,
+        text: step.text,
+        line: step.line,
+        ...(step.argument ? { arg: step.argument } : {}),
+      },
+      ctx,
+    };
   }
 
   /** A per-attempt view of the step context: own `step` info and a logger tagged with the attempt. */
@@ -1229,7 +1271,7 @@ export class Executor implements WorkerExecutor {
       try {
         await withTimeout(
           `Hook "${hook.name}"`,
-          hook.timeoutMs ?? registry.defaultTimeoutMs,
+          this.opts.debug ? 0 : (hook.timeoutMs ?? registry.defaultTimeoutMs),
           () => withLogger(ctx.log, () => (hook.fn as (c: RunContext) => unknown)(ctx)),
           kind === 'before' ? ctx.signal : undefined,
         );

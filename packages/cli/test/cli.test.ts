@@ -352,4 +352,16 @@ describe.skipIf(!built)('applySetOverrides', () => {
     expect(started[0].startupMs).toBeGreaterThan(0);
     expect(readFileSync(html, 'utf8')).toContain('class="tl-boot"');
   });
+
+  it('--debug needs a terminal: exits 2 with a clear message when stdin is not a TTY', () => {
+    const r = spawnSync(process.execPath, [bin, '--debug', '-D', 'env=local'], { cwd: project, encoding: 'utf8' });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('--debug needs an interactive terminal');
+  });
+
+  it('--debug-step and --inspect validate their arguments', () => {
+    const r = spawnSync(process.execPath, [bin, '--inspect', '99999'], { cwd: project, encoding: 'utf8' });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('--inspect expects a port number');
+  });
 });

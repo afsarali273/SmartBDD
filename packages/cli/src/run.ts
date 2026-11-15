@@ -27,6 +27,7 @@ import {
   type RunSummary,
   type ScenarioInstance,
 } from '@bddx/core';
+import { createDebugController, terminalIO, type DebugIO } from './debug.js';
 import { CancellationError, Executor, ProcessPool, TimeoutError, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
 import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
 import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
@@ -65,6 +66,15 @@ export interface RunRequest {
   rerunFailed?: string;
   /** 'inline' (default) or 'process' (overrides config `pool`). */
   pool?: 'inline' | 'process';
+  /**
+   * Interactive debugging: pause after a failing step ('fail') or before every step ('step').
+   * Forces one worker in this process, no retries and no scenario/group/run time budgets.
+   */
+  debug?: 'fail' | 'step';
+  /** Debugger IO (tests). Default: the terminal; requires a TTY. */
+  debugIO?: DebugIO;
+  /** Open the Node inspector (port) and wait for a client before running. */
+  inspect?: number | true;
   /** Programmatic cancellation. CLI Ctrl+C uses the same path. */
   signal?: AbortSignal;
   /** Internal: no CLI diagnostics (worker processes repeat the parent's preparation). */
@@ -157,6 +167,7 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   if (req.workers !== undefined) cliOverrides.workers = req.workers;
   if (req.pool !== undefined) cliOverrides.pool = req.pool;
   opts = mergeOptions(opts, cliOverrides);
+  if (req.debug) opts = forDebugging(opts);
 
   // CLI paths are relative to cwd; config globs are relative to rootDir.
   const featurePatterns = req.paths?.length
@@ -214,6 +225,18 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   return { rootDir, opts, rerunIds, specs: specs.filter((s) => inPaths.has(s.uri) || plan.nodes.some((n) => n.scenario.uri === s.uri)), all, selected, plan };
 }
 
+/** Debugging is one scenario at a time in this process, with nothing that fires while you think. */
+export function forDebugging(opts: BddxOptions): BddxOptions {
+  const { scenarioTimeout: _s, runTimeout: _r, retry: _re, ...rest } = opts;
+  const groups = opts.groups
+    ? Object.fromEntries(Object.entries(opts.groups).map(([k, g]) => {
+        const { timeout: _t, retry: _gr, scenarioRetry: _sr, ...g2 } = g;
+        return [k, g2];
+      }))
+    : undefined;
+  return { ...rest, workers: 1, pool: 'inline', ...(groups ? { groups } : {}) };
+}
+
 /** The whole `bddx run` pipeline, usable programmatically. */
 export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const { rootDir, opts, specs, plan, rerunIds } = await prepareRun(req);
@@ -226,6 +249,15 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
     return { success: false, exitCode: 2, scenarios: plan.nodes.map((n) => n.scenario) };
   }
 
+  let debugIO: (DebugIO & { close?(): void }) | undefined;
+  if (req.debug) {
+    if (req.dryRun) throw new UsageError('--debug cannot be combined with --dry-run');
+    if (!req.debugIO && !(process.stdin.isTTY && process.stdout.isTTY)) {
+      throw new UsageError('--debug needs an interactive terminal (stdin and stdout must be a TTY)');
+    }
+    debugIO = req.debugIO ?? terminalIO();
+  }
+  if (req.inspect !== undefined) await openInspector(req.inspect);
   const registry = await loadSupportCode(rootDir, opts, req.quiet);
 
   const history = req.dryRun ? undefined : historySettings(opts, rootDir);
@@ -272,6 +304,7 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
       specs,
       plan,
       signal: controller.signal,
+      ...(debugIO ? { debug: createDebugController({ stepMode: req.debug === 'step', io: debugIO, quit: () => controller.abort(new CancellationError('Debug session ended')) }) } : {}),
       ...(pool ? { pool } : {}),
     }).execute(plan.nodes.map((n) => n.scenario));
   } finally {
@@ -279,6 +312,7 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
     req.signal?.removeEventListener('abort', forwardAbort);
     if (runTimer) clearTimeout(runTimer);
     pool?.kill();
+    debugIO?.close?.();
   }
 
   const listenerErrors = await bus.flush();
@@ -494,4 +528,12 @@ function cliDebug(level: BddxOptions['logLevel'], lines: string[]): void {
 
 function asArray(x: string | string[]): string[] {
   return Array.isArray(x) ? x : [x];
+}
+
+/** Open the Node inspector and wait for a debugger (Chrome devtools, VS Code "attach") to connect. */
+async function openInspector(port: number | true): Promise<void> {
+  const inspector = await import('node:inspector');
+  if (inspector.url()) return; // already started with --inspect
+  inspector.open(port === true ? 9229 : port, '127.0.0.1', true);
+  process.stderr.write(`bddx: inspector listening at ${inspector.url()}; waiting for a debugger to attach...\n`);
 }

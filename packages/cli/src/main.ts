@@ -41,6 +41,10 @@ Options:
       --worker-crash-retry <n> Retry on a fresh process after a worker crash
       --fail-on-flaky     Fail the run when a scenario passed only after a retry
       --rerun-failed <f>  Run only scenarios that did not pass in events file <f> (+ their dependencies)
+      --debug             Interactive debugger: pause after a failing step (c/n/r/e/s/q at the prompt).
+                          Runs one scenario at a time in this process, no retries or time budgets
+      --debug-step        Like --debug, but pause before every step
+      --inspect [port]    Open the Node inspector (default 9229) and wait for a debugger to attach
       --fail-on-warnings   With validate, return exit 1 when warnings are found
   -h, --help              Show help
   -v, --version           Show version
@@ -65,6 +69,9 @@ export async function main(argv: string[]): Promise<number> {
         format: { type: 'string', short: 'f', multiple: true },
         define: { type: 'string', short: 'D', multiple: true },
         'dry-run': { type: 'boolean' },
+        debug: { type: 'boolean' },
+        'debug-step': { type: 'boolean' },
+        inspect: { type: 'string' },
         'fail-fast': { type: 'boolean' },
         timeout: { type: 'string' },
         'run-timeout': { type: 'string' },
@@ -192,6 +199,8 @@ export async function main(argv: string[]): Promise<number> {
       ...(values.format ? { formats: values.format } : {}),
       ...(Object.keys(params).length ? { params } : {}),
       ...(values['dry-run'] ? { dryRun: true } : {}),
+      ...(values['debug-step'] ? { debug: 'step' as const } : values.debug || values.inspect !== undefined ? { debug: 'fail' as const } : {}),
+      ...(values.inspect !== undefined ? { inspect: inspectPort(values.inspect) } : {}),
       ...(values['fail-fast'] ? { failFast: true } : {}),
       ...(noStrict ? { strict: false } : {}),
       ...(values.timeout ? { stepTimeoutMs: Number(values.timeout) } : {}),
@@ -277,4 +286,11 @@ async function snippets(paths: string[], config?: string, profile?: string, tags
     process.stdout.write(`// used at: ${[...new Set(locations)].join(', ')}\n${snippet}\n\n`);
   }
   return outcome.exitCode;
+}
+
+function inspectPort(v: string): number | true {
+  if (v === '') return true;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new UsageError(`--inspect expects a port number, got "${v}"`);
+  return n;
 }
