@@ -1,6 +1,6 @@
 # bddx: status overview (done so far and what remains)
 
-_Last updated: 2026-11-15 (after session 9: HTML report v2 and run history)._
+_Last updated: 2026-11-15 (after session 12: independent UI/API coverage and Page Object Model examples)._
 
 This is the one-page answer to "what does bddx do today, and what is left?". It is a summary: details live in
 [IMPLEMENTATION.md](IMPLEMENTATION.md) (how), [DECISIONS.md](DECISIONS.md) (why), [ROADMAP.md](ROADMAP.md) (task
@@ -27,10 +27,11 @@ replaceable adapters. TypeScript first, Java later (same config, events and conf
 | 7 Java port | JUnit Platform engine, same config/events/conformance | ⬜ Not started |
 | Parked | Code-linked Markdown specs; callable scenarios | ⏸ Owner decision: later |
 
-**Health:** `npm run verify` is green: 164 tests (unit, conformance, CLI end to end), plus the offline example projects.
-The optional live `examples/playwright-showcase` project is independently green: 119 scenarios / 504 steps across 11
-feature files against The Internet, SauceDemo, TodoMVC, JSONPlaceholder and DummyJSON (not part of root verify because
-it requires network access and a Chromium download).
+**Health:** `npm run verify` is green: 178 tests (unit, conformance, CLI end to end), plus the offline example projects.
+The optional live `examples/playwright-showcase` project is independently green: 125 scenarios / 523 steps across 13
+feature files against The Internet, SauceDemo, TodoMVC, JSONPlaceholder, DummyJSON, Playwright documentation and HTTPBin
+(not part of root verify because it requires network access and a Chromium download). Six scenarios are deliberately
+ungrouped and run without named-group scheduling.
 
 ---
 
@@ -123,14 +124,24 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 - `--log-level` controls the console. Framework diagnostics appear at `debug`.
 - Reporters:
   - **console** (pretty or progress, with retry/flaky/quarantine markers)
-  - **HTML v2** (one self-contained file, works offline):
+  - **HTML v3** (one self-contained file, works offline; tabs Overview / Results / Execution / History):
+    - **statistics overview**: KPI cards (pass rate with delta vs previous run, duration, parallelism, stability),
+      status donut, duration percentiles and histogram, failures grouped by cause, slowest scenarios, breakdown by
+      feature, tag and group
+    - **data-driven views**: every Examples block / CSV / Excel / JSON data set is one colour-coded table (a row per
+      scenario, a column per parameter, source badge, status bar, collapsible scenario template with highlighted
+      `<placeholders>`); step data tables and doc strings render as tables tinted by the step status
+    - **responsive**: works from phones to wide screens (sticky tab bar, stacked data rows on small screens, filter
+      count and empty state, back-to-top)
+    - **sharing**: copy summary (Slack/PR text), copy link (tab, search and filters are in the URL), download JSON,
+      print/PDF, light/dark theme, per-scenario permalinks, keyboard shortcuts
     - filters, steps, logs with images, attachments, attempts, trimmed stacks (v1)
     - **timeline**: one lane per worker (bars = scenario attempts, retried attempts hatched, worker start-up shown,
       busy %), plus one row per group; bars link to the scenario
     - **dependency graph**: scenarios and groups that depend on each other, laid out left to right; soft
       dependencies dashed
     - **history**: pass rate per run, flakiest scenarios table, and per-scenario trend dots + flaky score
-  - **JUnit XML** (Surefire `flakyFailure`; quarantined failures become `<skipped>`)
+  - **JUnit XML** (Surefire `flakyFailure`; quarantined failures become `<skipped>`; failed run/worker/group hooks become errored cases)
   - **Cucumber JSON**
   - **NDJSON** event stream (versioned schema; the source of truth for every other report)
 - **Run history** (`history: true`): one small JSON record per run in `.bddx/history` (last 50 kept). Flakiness
@@ -150,7 +161,7 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 - Ports and adapters: `SpecParser`, `TagExpressionEngine`, `StepExpressionEngine`. Cucumber libraries are imported only in `adapters/`.
 - Language-neutral **conformance suite** (9 features with expected JSON) that the Java port must also pass.
 - Four runnable examples: `examples/basic`, `examples/orchestration`, `examples/resilience`, plus the standalone
-  `examples/playwright-showcase` real project (119 UI/API scenarios across 11 feature files, powered by Playwright but
+  `examples/playwright-showcase` real project (125 UI/API scenarios across 13 feature files, powered by Playwright but
   run by bddx).
 - 24 ADRs recording the design decisions.
 
@@ -191,9 +202,32 @@ scenarioRetry, timeout), `defaultMode`, `logLevel`, `retry` (scenario, delay, ba
 
 ### 4.1 Next (in order)
 1. **Phase 5: the rest (developer experience)**
-   - Debug mode: `--inspect` with a single worker, plus pause on failure.
-   - Cucumber Messages adapter, so Cucumber-ecosystem tools can read bddx output.
-   - Watch mode; CI sharding by duration.
+   - ~~Debug mode~~ DONE (session 13): `--debug` pauses after a failing step, `--debug-step` before every step, `--inspect [port]`
+     opens the Node inspector and waits. Prompt: `c` continue, `n` next step, `r` retry the failed step, `s` state, `e <expr>`
+     (eval with `ctx`), `q` quit. Forces 1 worker, inline pool, no scenario/group/run/step/hook timeouts, no retries.
+     Needs a TTY (exit 2 otherwise). Runtime: `ExecuteOptions.debug: DebugController` (`beforeStep`, `onFailure`);
+     CLI: `packages/cli/src/debug.ts`. Open: when `beforeWorker` fails, `afterWorker` still runs (cascading error).
+   - ~~Cucumber Messages adapter~~ DONE (session 13): `-f messages[:file]` (default `reports/messages.ndjson`, `reporters/src/messages.ts`).
+     Regenerates `source`/`gherkinDocument`/`pickle` from the feature files (`sourceRoot`, set to the project root by the CLI) with
+     `@cucumber/gherkin`, then maps run events to `testRunStarted`, `testCase`, `testCaseStarted` (attempt, workerId),
+     `testStepStarted/Finished` (with exception), `attachment` (attachments, screenshots, user logs as `text/x-cucumber-log+plain`),
+     `testCaseFinished` (`willBeRetried`), `testRunFinished`, plus `stepDefinition`. Validated with `parseEnvelope`.
+     Limits: scenarios from `@data` files have no pickle and are left out; groups/locks/hook levels have no Messages equivalent;
+     hooks are not emitted as `hook`/`testStep` messages yet.
+   - ~~Watch mode~~ DONE (session 13): `bddx --watch` (`cli/src/watch.ts`). Each run is a fresh child process (step code, page
+     objects and config always reload). Changed `.feature`/`.md` files re-run just those files; any other change re-runs the
+     original selection; changes during a run are coalesced. Keys: Enter/`a` all, `f` failed (via `--rerun-failed`), `q` quit.
+     Ignores node_modules, .git, .bddx, dist, reports. Not combinable with `--debug`/`--dry-run`. Uses recursive `fs.watch`.
+   - ~~CI sharding~~ DONE (session 13): `--shard i/n` on `run` and `plan`. `core/src/plan/shard.ts`: scenarios linked by dependencies,
+     named groups or locks form one unit (never split across machines); units are packed largest-first onto shards by average
+     duration from run history (`history: true`; equal weights without it, unknown durations use the median). Deterministic, so
+     every CI machine agrees. Warns when one unit dominates; an empty shard exits 0. CI example: matrix of `--shard $i/4`,
+     restore `.bddx/history` as a cache, merge results with `bddx report a.ndjson b.ndjson -f html`.
+   - ~~Living documentation~~ DONE (session 13): `bddx docs [paths] [-o file] [--results events.ndjson]... [--title t]`
+     (`cli/src/run.ts buildLivingDocs`, `reporters/src/living-docs.ts`). One offline HTML page: folder tree navigation, each
+     folder's `README.md` is its introduction (first heading = folder title), features with description, scenarios, steps, data
+     tables and doc strings, tag chips, search. Results (from `--results`, else the latest history run) colour scenarios and
+     roll up per folder. Markdown is a small safe subset (links limited to http(s), mailto, relative).
    - VS Code extension and language server: step completion, go to definition.
 2. **Phase 6: ecosystem**
    - Plugin API: data loaders, reporters, parameter types, retry analyzers, plan modifiers.

@@ -3,7 +3,7 @@
 The single source of truth for "where are we" and the session history. Update it at the end of every work session
 (see CLAUDE.md). For a feature-by-feature summary of what is done and what remains, see [STATUS.md](STATUS.md).
 
-## Current state (2026-11-15, session 9)
+## Current state (2026-11-15, session 12)
 
 - **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
 - **Phase 3:** done (incl. worker processes `--pool process`, `workerStarted` event) except `@requires`, `waitedForMs`.
@@ -12,10 +12,11 @@ The single source of truth for "where are we" and the session history. Update it
 - **Phase 4:** done: scenario/group retry, backoff, worker-crash retry, flaky, quarantine, rerun/merge, soft assertions,
   scenario/group/run time budgets, cancellation and graceful Ctrl+C. Plus step repeat/retry.
 - **DX:** `bddx validate` statically checks specs, config, plans, ids, step coverage, unused glue, hooks and governed tags.
-- **Real-project gate:** `examples/playwright-showcase` passes 119 Playwright UI/API scenarios (504 steps) across 11
-  feature files through bddx using four process workers. One command mixes serial and parallel target groups. It is
+- **Real-project gate:** `examples/playwright-showcase` passes 125 Playwright UI/API scenarios (523 steps) across 13
+  feature files through bddx using four process workers. One command mixes serial and parallel target groups and six
+  additional scenarios run ungrouped against Playwright docs and HTTPBin. It is
   optional/live and therefore kept outside root `npm run verify`.
-- **Health:** `npm run verify` green (164 tests + examples: basic, orchestration (inline + process), resilience).
+- **Health:** `npm run verify` green (178 tests + examples: basic, orchestration (inline + process), resilience).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 - **Framing (owner):** an automation framework with BDD-style specs, not BDD-purist. Practical features first.
@@ -232,3 +233,159 @@ Worked directly in the user's folder via device shell.
   passed to html reporters, `bddx history [--top n]`. `.bddx/` gitignored.
 - tests: core history (score, recorder, keep/load), reporters v2 views, CLI e2e (history + workerStarted). 164 tests.
 - Not committed by this session: `examples/playwright-showcase/src/pages/` (created concurrently by another session).
+
+### 2026-11-15: Session 11 (HTML report v3: statistics + redesign, JUnit hook failures)
+
+- Ran the Playwright showcase from the cloud VM: live targets and browsers are unreachable there (validate/plan/dry-run
+  and a failing `@health` run only). That run exposed a JUnit gap: failed run/worker/group/feature hooks were dropped, so
+  JUnit showed 0 failures while the run was FAILED. Fixed: they now appear as errored test cases in a `Hooks` suite.
+- HTML report v3 (`html.ts`, new `html-stats.ts`): tabs Overview / Results / Execution / History; Overview has KPI cards
+  (pass rate with delta vs previous run, scenarios, steps, wall time, parallelism, stability), status donut, steps bar,
+  duration percentiles + histogram, failures grouped by cause (numbers normalised), slowest scenarios, retried/flaky,
+  breakdowns by feature, tag and group (rows link into filtered Results).
+- Sharing/UX: Copy summary (Slack/PR text), Copy link (tab + search + filters live in the URL hash), Download JSON
+  (`#bddx-data`, also embedded), Print/PDF styles, light/dark/auto theme, per-scenario permalinks, copy-error buttons,
+  clickable tag chips, "Failures only" preset, shortcuts `/` `n` `p` `1`-`4`.
+- Statistics come from one function (`computeStats`, exported) so cards, summary text and JSON agree.
+- tests: JUnit hook failure, html v3 (tabs, JSON payload, computeStats, history delta). 178 tests. Verified interactions in
+  headless Chrome (routing, filters, clipboard, download, dark theme).
+- Not run live: the Playwright showcase end to end (needs network + `npx playwright install chromium` on the Mac).
+
+### 2026-11-15: Session 12 (Page Objects + ungrouped independent targets)
+
+- Added SauceDemo and TodoMVC Page Object Models under `examples/playwright-showcase/src/pages/`; migrated their UI
+  step definitions so selectors, waits and component actions are centralized outside Gherkin glue.
+- Added six deliberately ungrouped `@independent` scenarios across two new feature files: Playwright documentation UI
+  checks and HTTPBin API checks. They have no named group or group dependency and can run independently with
+  `npx bddx run --tags @independent`.
+- Validation now reports 125 scenarios / 523 steps / 96 definitions with zero errors or warnings. The independent
+  run passed all 6 scenarios and 19 steps; the migrated SauceDemo/TodoMVC run passed 41 scenarios and 148 steps.
+- follow-up (same session): data-driven display. `html-data.ts`: one table per Examples block / `@data` source (rows stay
+  normal scenario cards so filters, permalinks and shortcuts keep working; the summary line is a CSS-grid row, columns =
+  parameters, failing row shows its error inline), template with `<placeholders>`, step data tables and doc strings.
+  Event schema: `planReady` steps gain optional `arg` (additive). Dependency graph shows how many scenarios have no
+  dependencies. 178 tests.
+- follow-up 2 (same session): UI/UX + responsive pass (`html-responsive.ts`). Sticky tab bar with a status chip (header
+  scrolls away), sticky filter bar on desktop, "N of M shown" count, empty-filter state with reset, empty features and
+  datasets hide when filtered, back-to-top button, focus outlines. Breakpoints 900/720/520px: two-column KPIs, single
+  column cards, scrolling action row, stacked label/value cards for data rows, scrollable timeline, hidden status bars in
+  breakdown tables. Verified at 390, 820 and 1360px in headless Chrome (no horizontal overflow). 178 tests.
+- follow-up 3 (same session): data sets with more than 5 parameters keep the table layout on every screen size and scroll
+  sideways (pinned status + row number, visible scrollbar, "scroll sideways" hint, inline error and expanded body stay in
+  view); 5 or fewer stay compact (stacked cards on phones). Verified with a 14-column CSV at 390 and 1360px. 178 tests.
+
+### 2026-11-15: Session 13 (debug mode)
+- Added `--debug`, `--debug-step`, `--inspect [port]`. Runtime: `DebugController` (`runtime/src/debug.ts`) called from `Executor.runStep`
+  (before a step; after a final failure, with retry-the-step). Debugging disables timeouts and scenario/group retries.
+  CLI: readline prompt (`cli/src/debug.ts`, injectable IO), `forDebugging()` in `run.ts`. Tests: `runtime/test/debug.test.ts`, `cli/test/debug.test.ts`, 2 CLI tests. 190 tests green.
+- Added `--shard i/n` (`core/src/plan/shard.ts`, `parseShard`/`shardPlan`; union-find units over deps/groups/locks + LPT packing by history avg). Tests: `core/test/shard.test.ts` + CLI. 197 tests green.
+- Added `--watch` (`cli/src/watch.ts`, `cli/test/watch.test.ts` incl. an end-to-end edit-and-rerun test). 200 tests green.
+- Added Cucumber Messages reporter (`reporters/src/messages.ts`, `-f messages`), 2 CLI tests (parseEnvelope validation, retry attempts). New deps on `@cucumber/gherkin`/`messages` in reporters.
+- Added `bddx docs` living documentation (tests: `reporters/test/living-docs.test.ts`, CLI test; DOM behaviour checked in jsdom). 208 tests green.
+- Added fixtures (`defineFixture`, scenario/worker scope, teardown with status), `inject()` for classes and page objects, plugins (`definePlugin`, config `plugins`). Guide: docs/FIXTURES.md, ADR-025. Tests: runtime/test/fixtures.test.ts (11), cli/test/fixtures.test.ts (4: inline, process pool, shards, missing plugin). 223 tests green.
+- Added `plugins/playwright` (`@bddx/playwright`, standalone package, peer deps playwright + @bddx/runtime; `npm run verify` there: 7 tests with a fake Playwright). Offline example `plugins/playwright/example` (API scenarios verified live here; UI needs `npx playwright install` on a machine with browsers). Runtime: fixture teardown now gets `ctx`; fixtures are also detected from `ctx.name` / `const { name } = ctx` in function bodies.
+- Added serial features: `@serial` on a Feature or Rule, config `featureMode: 'serial'` + `@parallel` opt-out (docs/SERIAL-FEATURES.md, runtime/test/serial-feature.test.ts, 7 tests). Verified live: basic example, process pool, 3 workers: 0 overlaps within a feature, features in parallel. 230 tests green.
+- Added feature-scoped fixtures (`scope: 'feature'`, also in BeforeFeature hooks), `afterScenario` for feature/worker fixtures, `ctx.scenario.serial`, scheduler affinity (process pool: a serial feature stays on one worker process). Playwright plugin: `reuseContext: 'serial'` / `@reuseContext` / `@freshContext` (sharedContext/sharedPage). Tests: runtime fixtures (13), affinity (2), CLI serial session in the process pool (x3), plugin (12). 235 bddx tests green.
+- NEXT: run the example UI scenarios on the Mac (incl. features/journey.feature); migrate examples/playwright-showcase to the plugin; Selenium/HTTP plugins; VS Code extension.
+
+### 2026-11-15: Showcase migrated to `@bddx/playwright`
+
+- `examples/playwright-showcase` no longer launches Playwright itself: `bddx.config.ts` has `plugins: [playwright({...})]`
+  (context baseURL/viewport, request baseURL/headers, `actionTimeoutMs`, screenshot on failure). Removed BeforeWorker/
+  AfterWorker, the `@ui` Before/After hooks and the BROWSER/API/PAGE plumbing from `src/support/`. Steps use `ctx.page`,
+  `ctx.request`, `inject('page')`; `hooks.ts` imports `@bddx/playwright` for types. `-D headless=false` became `-D headed=true`.
+- Added dependency `@bddx/playwright: file:../../plugins/playwright` (plugin must be built: `npm run build` there).
+- Verified from the VM with real Chromium (installed, plus libxdamage1 unpacked to a local dir via LD_LIBRARY_PATH):
+  full run 125/125 scenarios, `--pool process` 4 workers. First run showed the helper-reads-`ctx.page` pitfall
+  (fixed in `independent-ui.steps.ts`, documented in the plugin README).
+- Uncommitted: this and the other session's showcase work (`features/independent/`, `src/pages/`, ...). package-lock.json
+  not regenerated: run `npm install` in the showcase on the Mac.
+
+### 2026-11-15: Playwright plugin exposes the whole Playwright API
+
+- Plugin: `expect` fixture (Playwright's web-first assertions from the optional peer `@playwright/test`; `expectTimeoutMs`),
+  `newContext` fixture (extra contexts closed after the scenario), options `device`/`-D device`, `testIdAttribute`,
+  `connect`, `cdpUrl`. 17 plugin tests. Showcase `ui.steps.ts` now uses `expect` (36 @the-internet scenarios pass on real Chromium).
+- Bug fixed in cli: `--set` crashed (`DataCloneError`) when the config held a plugin object (a function); it now copies only
+  the paths it changes. Regression test added.
+- Root `tsconfig.test.json` excludes `examples/playwright-showcase` (its own `tsc` checks it; the cli fake-browser fixture
+  declares a conflicting global `page` type).
+- Showcase now uses the new plugin features: `expect` (ui/saucedemo/todomvc steps), `testIdAttribute: 'data-test'` +
+  `getByTestId` page objects, `trace: 'only-on-failure'`, `expectTimeoutMs`, and `features/plugin/` (`@serial @reuseContext`
+  journey, `newContext` two-user isolation, device emulation). 131 scenarios / 539 steps pass on real Chromium (process
+  pool 4 workers and inline); plugin 17 tests; root verify 236 tests.
+
+### 2026-11-15: `@bddx/selenium` plugin
+
+- New `plugins/selenium` (separate package, same shape as the Playwright plugin): fixtures `selenium`, `driver`, `open`,
+  `wait`, `newDriver`, `sharedDriver` (feature scoped); options browser/headless/args/capabilities/server (Grid)/baseURL/
+  windowSize/timeouts/screenshot/`reuseSession` (`@reuseSession`, `@freshSession`); `-D browser|headed|server|baseURL`.
+- 12 tests with a fake selenium-webdriver; `example/` project (local shop server, login + `@serial @reuseSession` journey).
+- Verified with REAL Firefox 160 via Selenium Manager from the VM (inline and `--pool process -w 2`: 5/5 scenarios; a failing
+  scenario attaches a PNG). Needed libgtk-3/libcolord2/libdbus-glib/libxdamage unpacked locally (LD_LIBRARY_PATH); not needed on a Mac.
+  A real run caught a bug the fake missed: `Builder.withCapabilities()` replaces the browser name, so it is called before `forBrowser()`.
+- Not tried: Chrome/Edge/Safari and a remote Grid (Chrome-for-Testing downloads are blocked in the VM).
+
+### 2026-11-15: `examples/selenium-showcase`
+
+- New project with 33 scenarios / 107 steps in 6 feature files (the-internet + SauceDemo), using only `@bddx/selenium`.
+  Passes on real Firefox 160 in the process pool (3 workers, 97s); the SauceDemo group also passes with `--pool inline`.
+- Plugin fixes found by it: `wait(until.elementLocated(..))` now types as `WebElement` (overloads); the plugin loads the
+  PROJECT's `selenium-webdriver` (createRequire from cwd) because `until.*` conditions use `instanceof` and a second copy
+  (linked/duplicated install) made `driver.wait` reject them ("Wait condition must be a promise-like object").
+- Not tried: Chrome/Edge/Safari, a remote Grid. package-lock for the new project is not committed-checked; run `npm install` on the Mac.
+
+### 2026-11-15: `@bddx/axios` plugin (API testing)
+
+- New `plugins/axios`: fixtures `axios`, `api` (instance with baseURL/headers/timeout/auth, 4xx/5xx do not throw),
+  `newApi`; call log attached as `api-calls.json` (only-on-failure by default; Authorization/cookie headers masked,
+  bodies truncated); `-D token`, `-D baseURL`; loads the project's axios (createRequire from cwd).
+- 9 tests with REAL axios against a local server; `example/` project (6 scenarios, local products API) passes inline and
+  `--pool process -w 3`. Verified a failed scenario attaches the log with the token masked.
+- Using it together with `@bddx/playwright` / `@bddx/selenium` in one scenario: documented, not yet exercised in a showcase.
+
+### 2026-11-15: mixed UI + API scenarios (Playwright showcase)
+
+- Showcase now uses both plugins: `@bddx/playwright` (`page`, `context`, `newContext`, `expect`) and `@bddx/axios` (`api`).
+  `features/mixed/ui-and-api.feature` (8 scenarios, group `mixed`): API data -> UI (post title becomes a TodoMVC item),
+  API vs browser status-code pages, basic auth in both (API `auth`, browser `httpCredentials` via `newContext`), browser
+  login cookies handed to an API call. All pass on real Chromium; full showcase 139 scenarios / 569 steps.
+
+### 2026-11-15: documentation site theme (`website/`)
+
+- Static HTML, no build: `index.html` (landing; hero is a worker-lane schedule of the showcase run, HTML/CSS),
+  `docs/getting-started.html` (requirements for macOS/Windows/Linux, install from the clone, first project, plugins,
+  Windows notes, troubleshooting), `docs/components.html` (every component with markup), `docs/_template.html`.
+- `assets/css/theme.css` (tokens, light/dark, layout, components), `assets/js/site.js` (theme toggle, sidebar from
+  `assets/js/nav.js`, TOC, anchors, syntax colours, copy, tabs synced by group), IBM Plex fonts self-hosted (OFL).
+- Image placeholders: `figure.placeholder` `data-kind="ai"` (prompt to generate) or `"screenshot"` (what to capture).
+- Verified: pages render without script errors in headless Chromium (light, dark, mobile); the getting-started project
+  and its axios example were built from the page's own code blocks and pass. Screenshots in `website/.preview/` (gitignored).
+- Facts used: Playwright needs Node 20/22/24, macOS 14+, Windows 11+/Server 2019+/WSL (playwright.dev); installed
+  selenium-webdriver declares Node ^22.23.4 || ^24.22.1 || >=26.12.1. Windows not yet verified by bddx's own runs (stated on the page).
+- Next: write the planned pages listed in nav.js (ready: false), generate images from the prompts.
+
+### 2026-11-15: documentation site, all planned pages written (`website/`)
+
+- 36 pages written in `website/src/*.page` and generated to `website/docs/*.html` by `website/tools/build-pages.mjs`
+  (it also flips `ready: true` in `assets/js/nav.js`). Sidebar now has no planned-only pages left.
+  - Introduction: why-bddx, first-project, from-cucumber (plus the hand-written getting-started).
+  - Writing tests: feature-files, steps, parameter-types, data-tables, data-files, hooks, fixtures, class-steps.
+  - Running: cli, configuration, profiles, tags, debugging.
+  - Orchestration: groups, dependencies, serial-features, locks, retries, process-pool, sharding.
+  - Reports: reporters, html-report, living-docs.
+  - Plugins: plugins, playwright, selenium, axios, mixed, writing-plugins.
+  - Reference: reference-cli, reference-config, reference-api, reference-events.
+- Sources of truth used: `--help` output, `docs/STATUS.md`, `docs/IMPLEMENTATION.md`, `docs/FIXTURES.md`, `docs/SERIAL-FEATURES.md`,
+  the plugin READMEs and `packages/*/src` types. The first-project page was run in `~/code/tut-first` (7 scenarios, plan output pasted).
+- Checks run: internal links and anchors (only the markup sample in components.html points at a missing image), every page loads
+  in Chromium with no console errors and no horizontal overflow at 1280 and 390 px.
+- Image placeholders (AI prompt or "capture yourself") are still to be filled by the owner. List them with
+  `grep -rho 'Save as <code>assets/img/[^<]*' website/docs | sort -u`.
+- Not verified: Windows runs of bddx itself; the GitHub Actions example in sharding.html was not run; Chrome/Edge/Safari/Grid for
+  Selenium; examples in pages that call public sites were not re-run (they come from the showcases, which passed earlier).
+- Page claims that came from docs and not from a run: group `mode: 'exclusive'` semantics, `--inspect` attach steps, `bddx docs`
+  defaults, `messages` reporter limits. Re-check these if behaviour changes.
+- Next: owner fills images; optionally write `bddx migrate` codemod (the from-cucumber page says none exists); mark "Not on npm yet"
+  wording in getting-started, plugins and sharding when packages are published.
+

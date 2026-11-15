@@ -235,7 +235,7 @@ Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed
 | `examples/basic` | Steps, hooks, outlines, class steps + DI, `@data`, step repeat/retry |
 | `examples/orchestration` | Groups, dependencies, locks, exports, logs with images (inline and `--pool process`) |
 | `examples/resilience` | Scenario/group retry, flaky, quarantine, soft assertions, time budget |
-| `examples/playwright-showcase` | Standalone real project: 119 Playwright UI/API scenarios across 11 feature files, run entirely by bddx |
+| `examples/playwright-showcase` | Standalone real project: 125 Playwright UI/API scenarios across 13 feature files, run entirely by bddx |
 | `docs` | Implementation notes, progress log, decisions, roadmap |
 
 ## Documentation

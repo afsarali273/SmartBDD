@@ -353,8 +353,9 @@ Playwright supplies only Chromium and `APIRequestContext`.
 - `concurrent:false` protects every browser step; API steps opt into concurrent `@repeat` safely.
 - A serial health group gates separate UI/API groups. The process-pool plan uses four workers, with independent group
   caps and time budgets. Scenario dependencies consume health exports across processes.
-- The project covers 119 scenarios / 504 steps across 11 feature files against public demo targets. Its single plan
-  intentionally mixes serial SauceDemo/DummyJSON groups with parallel The Internet/JSONPlaceholder/TodoMVC groups.
+- The project covers 125 scenarios / 523 steps across 13 feature files against public demo targets. Its single plan
+  intentionally mixes serial SauceDemo/DummyJSON groups with parallel The Internet/JSONPlaceholder/TodoMVC groups,
+  plus six ungrouped Playwright documentation and HTTPBin checks.
   Because those targets and the Chromium
   download require network access, its `npm run verify` is intentionally independent of the repository's offline root
   verification.
@@ -382,6 +383,17 @@ plugin. Automatic failure-only trace capture still belongs to that package-level
 - **Graph**: nodes = scenarios with `@dependsOn` edges and groups with `dependsOn` (or `group:` targets); layer =
   longest path; capped at 150 nodes. Opened by default for plans of ≤ 60 scenarios.
 - **Anchors**: scenario cards have `id="sc-<plan index>"`; a click on a bar/node opens and scrolls to the card.
+
+**HTML report v3 (statistics + redesign).** `html-stats.ts` holds `computeStats` (pass rate = passed / executed, nearest-rank
+percentiles, duration histogram, failure clusters keyed by the first error line with digits normalised, breakdowns by
+feature/tag/group, delta vs the previous history run) and the Overview renderers. `html.ts` lays the page out as tabs and
+embeds the results as JSON (`#bddx-data`, `<` escaped) that the share buttons use. View state (tab, search, hidden
+statuses) is kept in `location.hash` so a link reproduces the view. No external assets. JUnit also reports failed
+non-scenario hooks as errored cases in a `Hooks` suite.
+
+**Data-driven display.** `html-data.ts` groups outline/data rows by `uri|baseId|Examples name` and renders each group as a
+dataset (header with source, counts and status bar; template with `<placeholders>`; grid rows). The planned steps now
+carry the step argument (`arg`: data table or doc string; optional, additive) so tables can be drawn.
 
 ## 2d. Configuration sources and precedence
 

@@ -46,6 +46,7 @@ Renaming a scenario without `@id` changes its id; teams that depend on a scenari
 
 Cucumber Messages lacks concepts we need (groups, attempts per group, locks, hook levels beyond scenario).
 We emit our own flat, documented NDJSON schema and will add a Messages adapter (phase 5) for ecosystem tools.
+Delivered (session 13) as the `messages` reporter: it translates the event stream, so our schema stays the source of truth.
 
 ## ADR-008 TypeScript step files loaded with tsx (2026-11-15)
 
@@ -219,3 +220,16 @@ configuration remain extraction work.
   after a retry). Consistent failures score 0 on purpose: broken ≠ flaky.
 - **Opt-in** (`history: true`): bddx does not write into a project folder unasked. Dry runs are never recorded.
 - New event `workerStarted` (additive) so the timeline can tell worker start-up apart from idle time.
+
+## ADR-025 Fixtures, `inject()` and plugins in the runtime; integrations as separate plugins (2026-11-15)
+
+Step code had to wire everything by hand (`page(ctx)` helpers, `static inject = [CONTEXT]`, getters). Fixtures (named,
+lazy, `scenario` or `worker` scoped, with dependencies and teardown) live in `@bddx/runtime`, requested by destructuring
+the first parameter (as in Playwright Test), `ctx.fixture(name)` or `inject()` in classes. Worker scope means "per worker
+process" so it maps onto both pools without changing scheduling; fixtures never affect the plan, so groups, dependencies,
+locks, retries and sharding are untouched. `inject('x')` for an async fixture throws `FixtureNotReady` during
+construction; the `@Steps()` wrapper creates the fixture and constructs again (construction is synchronous, so a
+module-level "constructing" context is safe under concurrency). Integrations (Playwright, Selenium, HTTP) are plugins
+(`definePlugin`, config `plugins`) resolved from the user's project: bddx has no dependency on them (TestNG/JUnit model).
+Considered: a lazy proxy for async values (breaks `instanceof` and identity) and re-running steps on demand (unsafe side
+effects); rejected.

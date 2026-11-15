@@ -31,7 +31,7 @@ file is self-contained.
 - [x] Cucumber JSON reporter (`cucumber-json` / `json`)
 - [x] `bddx snippets` command
 - [x] `bddx validate`: parse/plan/config errors, undefined/ambiguous steps, duplicate ids, unused steps, unmatched hooks, optional tag governance
-- [x] Gate: a real project runs end to end (`examples/playwright-showcase`: 119 Playwright UI/API scenarios across 11
+- [x] Gate: a real project runs end to end (`examples/playwright-showcase`: 125 Playwright UI/API scenarios across 13
       feature files, mixing serial and parallel groups in one command)
 
 ## Phase 2: Data-driven specs (data core done)
@@ -110,12 +110,13 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [x] HTML report v1 (single file): summary, groups, filters, steps, logs with images, attachments, errors (`html` reporter)
 - [x] HTML report v2: timeline per worker lane (attempts, retried attempts, worker start-up, busy %, group spans),
       dependency graph (scenarios + groups, soft dashed), history view; all inline SVG, one offline file
-- [ ] Living documentation view (folder tree = requirements; README.md per folder)
+- [x] Living documentation view: `bddx docs` (folder tree = requirements; README.md per folder)
 - [x] History store (`history` config, `.bddx/history`, keep N) + flakiness score + `bddx history`
-- [ ] Cucumber Messages adapter (ADR-007)
-- [ ] Interactive debug mode (pause on failure, inspect context)
+- [x] Cucumber Messages adapter (ADR-007): `-f messages[:file]`
+- [x] Interactive debug mode: `--debug` (pause on failure), `--debug-step`, `--inspect`
 - [ ] VS Code extension + language server (step completion, go to definition)
-- [ ] Watch mode, CI sharding by duration
+- [x] Watch mode: `--watch`
+- [x] CI sharding by duration: `--shard i/n`
 
 ## Parked: code-linked Markdown specs (owner's idea, later phase)
 
