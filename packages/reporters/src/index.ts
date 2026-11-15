@@ -11,6 +11,7 @@ export { junitReporter } from './junit.js';
 export { ndjsonReporter } from './ndjson.js';
 export { cucumberJsonReporter } from './cucumber-json.js';
 export { htmlReporter } from './html.js';
+export { computeStats, summaryText, passRateOf, type Stats } from './html-stats.js';
 export { attemptsNote, formatLogLine, LogIndex, type ReportLogLevel } from './logs.js';
 
 /** Built-in reporters by name. Plugins (phase 6) will be able to add to this map. */

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { BddxEvent, ErrorInfo, PlannedScenario, ScenarioFinished, StepFinished } from '@bddx/core';
+import type { BddxEvent, ErrorInfo, HookFinished, PlannedScenario, ScenarioFinished, StepFinished } from '@bddx/core';
 import type { Reporter, ReporterOptions } from './types.js';
 import { formatLogLine, LogIndex, type ReportLogLevel } from './logs.js';
 
@@ -18,6 +18,7 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
   const earlier = new Map<string, ScenarioFinished[]>(); // failed attempts that were retried
   const failingStep = new Map<string, StepFinished>();
   const logs = new LogIndex((raw['logLevel'] as ReportLogLevel | undefined) ?? 'info');
+  const hookFailures: HookFinished[] = [];
   let xml = '';
 
   return {
@@ -36,8 +37,9 @@ export function junitReporter(raw: ReporterOptions = {}): Reporter {
           failingStep.delete(e.scenarioId);
         } else results.set(e.scenarioId, e);
       }
+      if (e.type === 'hookFinished' && e.status === 'failed' && !e.scenarioId) hookFailures.push(e);
       if (e.type === 'log') logs.add(e);
-      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs, logs, earlier);
+      if (e.type === 'runFinished') xml = render(suiteName, plan, results, failingStep, e.summary.durationMs, logs, earlier, hookFailures);
     },
     async close() {
       if (!xml) return;
@@ -55,6 +57,7 @@ export function render(
   durationMs: number,
   logs: LogIndex = new LogIndex('silent'),
   earlier: Map<string, ScenarioFinished[]> = new Map(),
+  hookFailures: HookFinished[] = [],
 ): string {
   const byFeature = new Map<string, PlannedScenario[]>();
   for (const s of plan) {
@@ -123,7 +126,16 @@ export function render(
       `  <testsuite name="${esc(scenarios[0]!.featureName)}" file="${esc(uri)}" tests="${scenarios.length}" failures="${sFail}" skipped="${sSkip}" errors="0" time="${sTime.toFixed(3)}">\n${cases.join('\n')}\n  </testsuite>`,
     );
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${esc(suiteName)}" tests="${tests}" failures="${failures}" skipped="${skipped}" errors="0" time="${(durationMs / 1000).toFixed(3)}">\n${suites.join('\n')}\n</testsuites>\n`;
+  // Failed run / worker / group / feature hooks belong to no scenario; report each as an errored testcase so CI goes red.
+  if (hookFailures.length) {
+    const cases = hookFailures.map((h) => {
+      const message = h.error?.message ?? 'hook failed';
+      return `    <testcase name="${esc(`${h.kind} ${h.level} hook: ${h.hookName}`)}" classname="hooks" time="${(h.durationMs / 1000).toFixed(3)}">\n      <error type="hook" message="${esc(firstLine(message))}">${esc(h.error?.stack ?? message)}</error>\n    </testcase>`;
+    });
+    tests += hookFailures.length;
+    suites.push(`  <testsuite name="Hooks" tests="${hookFailures.length}" failures="0" skipped="0" errors="${hookFailures.length}" time="0.000">\n${cases.join('\n')}\n  </testsuite>`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${esc(suiteName)}" tests="${tests}" failures="${failures}" skipped="${skipped}" errors="${hookFailures.length}" time="${(durationMs / 1000).toFixed(3)}">\n${suites.join('\n')}\n</testsuites>\n`;
 }
 
 /** CDATA section; splits any "]]>" so the XML stays valid. Control characters are removed. */

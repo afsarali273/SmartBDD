@@ -49,6 +49,28 @@ describe('console reporter', () => {
   });
 });
 
+describe('junit reporter: run-level hook failures', () => {
+  it('reports a failed BeforeWorker hook as an errored testcase so CI goes red', async () => {
+    const r = new SupportRegistry();
+    r.defineStep('ok', () => {});
+    r.defineHook('worker', 'before', {}, () => {
+      throw new Error('browser missing');
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-junit-hook-'));
+    const file = join(dir, 'j.xml');
+    const rep = junitReporter({ outputFile: file });
+    const bus = new EventBus();
+    bus.on((e) => rep.onEvent(e));
+    await new Executor({ registry: r, bus }).execute(parseSpec('Feature: F\n  Scenario: s\n    Given ok\n', 'f.feature').scenarios);
+    await bus.flush();
+    await rep.close?.();
+    const xml = readFileSync(file, 'utf8');
+    expect(xml).toMatch(/<testsuites [^>]*errors="1"/);
+    expect(xml).toContain('<testsuite name="Hooks"');
+    expect(xml).toContain('<error type="hook" message="browser missing">');
+  });
+});
+
 describe('junit reporter', () => {
   it('writes escaped XML with failures', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bddx-junit-'));
@@ -281,5 +303,77 @@ describe('HTML report v2 views', () => {
     expect(html).toContain('<summary>Timeline</summary>');
     expect(html).not.toContain('<summary>Dependencies</summary>');
     expect(html).not.toContain('<summary>History</summary>');
+  });
+});
+
+describe('html reporter v3: statistics, tabs and sharing', () => {
+  async function mixedHtml() {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html4-'));
+    const file = join(dir, 'r.html');
+    await runWith(htmlReporter({ outputFile: file, title: 'Stats </script> run' }));
+    return readFileSync(file, 'utf8');
+  }
+
+  it('has Overview/Results/Execution tabs and a stats overview with KPIs, causes and breakdowns', async () => {
+    const html = await mixedHtml();
+    expect(html).toContain('data-tab="overview"');
+    expect(html).toContain('data-tab="results"');
+    expect(html).toContain('data-tab="execution"');
+    expect(html).not.toContain('data-tab="history"'); // no history recorded
+    expect(html).toContain('33.3%'); // 1 of 3 passed
+    expect(html).toContain('Failures grouped by cause');
+    expect(html).toContain('expected &lt;200&gt; got &quot;500&quot;');
+    expect(html).toContain('Scenario results');
+    expect(html).toContain('By feature');
+    expect(html).toContain('class="donut"');
+  });
+
+  it('embeds the results as JSON that cannot break out of the script tag', async () => {
+    const html = await mixedHtml();
+    const m = /<script type="application\/json" id="bddx-data">([\s\S]*?)<\/script>/.exec(html);
+    expect(m).not.toBeNull();
+    const payload = JSON.parse(m![1]!) as { title: string; success: boolean; summary: string; scenarios: Array<{ name: string; status: string }>; stats: { total: number } };
+    expect(payload.title).toBe('Stats </script> run');
+    expect(payload.success).toBe(false);
+    expect(payload.stats.total).toBe(3);
+    expect(payload.scenarios.map((x) => `${x.name}:${x.status}`)).toEqual(['good:passed', 'bad:failed', 'missing:undefined']);
+    expect(payload.summary).toContain('FAILED');
+    expect(html.match(/<\/script>/g)!.length).toBe(2); // data + behaviour only
+  });
+
+  it('computeStats: pass rate, percentiles, histogram, failure clusters (numbers normalised) and breakdowns', async () => {
+    const { computeStats, summaryText } = await import('@bddx/reporters');
+    const plan = [1, 2, 3, 4].map((n) => ({
+      id: `s${n}`, name: `sc${n}`, uri: n < 3 ? 'a.feature' : 'b.feature', line: n, featureName: n < 3 ? 'A' : 'B',
+      tags: n === 1 ? ['@x'] : [], steps: [{ id: `st${n}`, keyword: 'Given ', text: 'x', line: n }],
+    }));
+    const fin = (id: string, status: string, durationMs: number, message?: string) =>
+      [id, { type: 'scenarioFinished', scenarioId: id, status, durationMs, attempt: 1, ...(message ? { error: { name: 'Error', message } } : {}) }] as const;
+    const results = new Map([fin('s1', 'passed', 50), fin('s2', 'failed', 300, 'HTTP 500 after 3 tries'), fin('s3', 'failed', 700, 'HTTP 502 after 9 tries'), fin('s4', 'skipped', 0)]);
+    const stats = computeStats({ plan, results: results as never, steps: new Map(), retries: new Map(), intervals: [], workers: 2, history: [] });
+    expect(stats.total).toBe(4);
+    expect(stats.executed).toBe(3);
+    expect(stats.passRate).toBeCloseTo(1 / 3);
+    expect(stats.duration).toMatchObject({ p50: 300, max: 700 });
+    expect(stats.histogram.find((h) => h.label === '<100ms')!.count).toBe(1);
+    expect(stats.clusters).toHaveLength(1); // 500 and 502 differ only by digits -> one cause
+    expect(stats.clusters[0]!.scenarios.map((x) => x.id)).toEqual(['s2', 's3']);
+    expect(stats.slowest[0]!.id).toBe('s3');
+    expect(stats.byFeature.map((r) => `${r.label}:${r.counts.failed}`)).toEqual(['A:1', 'B:1']);
+    expect(stats.byTag).toHaveLength(1);
+    expect(summaryText('T', false, '', stats)).toMatch(/pass rate 33\.3%[\s\S]*Failures \(2\):[\s\S]*2× HTTP 500/);
+  });
+
+  it('shows a History tab and a delta vs the previous run when history exists', async () => {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html5-'));
+    const file = join(dir, 'r.html');
+    const previous = [{ v: 1 as const, runId: 'old', startedAt: 1, durationMs: 100, success: true, workers: 1, scenarios: { a: { s: 'passed' as const, d: 1, n: 'a' }, b: { s: 'passed' as const, d: 1, n: 'b' }, c: { s: 'passed' as const, d: 1, n: 'c' } } }];
+    await runWith(htmlReporter({ outputFile: file, history: previous }));
+    const html = readFileSync(file, 'utf8');
+    expect(html).toContain('data-tab="history"');
+    expect(html).toContain('id="tab-history"');
+    expect(html).toContain('vs previous run');
   });
 });
