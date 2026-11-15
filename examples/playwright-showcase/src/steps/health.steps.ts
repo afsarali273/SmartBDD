@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { Then, When } from '@bddx/runtime';
-import { HEALTH_STATUS, api, requiredParam } from '../support/world.js';
+import { HEALTH_STATUS, requiredParam } from '../support/world.js';
 
 When('I check the {string} target', async (ctx, target: string) => {
   const params: Record<string, string> = {
@@ -13,7 +13,7 @@ When('I check the {string} target', async (ctx, target: string) => {
   const param = params[target];
   if (!param) throw new Error(`Unknown health target: ${target}`);
   const url = requiredParam(ctx, param);
-  const result = await api(ctx).get(url, { timeout: 15_000 });
+  const result = await ctx.request.get(url, { timeout: 15_000 });
   ctx.state.set(HEALTH_STATUS, result.status());
   ctx.log.info(`${target} health response`, { url, status: result.status() });
 });

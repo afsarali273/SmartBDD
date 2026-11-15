@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { Given, Then, When } from '@bddx/runtime';
-import { api, requiredParam, response, snapshotResponse } from '../support/world.js';
+import { requiredParam, response, snapshotResponse } from '../support/world.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -9,7 +9,7 @@ Given('the DummyJSON API base URL is configured', (ctx) => {
 });
 
 When('I GET DummyJSON path {string}', async (ctx, path: string) => {
-  await snapshotResponse(ctx, await api(ctx).get(`${requiredParam(ctx, 'dummyApiBaseUrl')}${path}`));
+  await snapshotResponse(ctx, await ctx.request.get(`${requiredParam(ctx, 'dummyApiBaseUrl')}${path}`));
 });
 
 Then('the API field {string} is not empty', (ctx, field: string) => {

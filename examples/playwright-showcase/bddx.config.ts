@@ -1,9 +1,33 @@
 import { defineConfig } from '@bddx/cli';
+import { axios } from '@bddx/axios';
+import { playwright } from '@bddx/playwright';
+
+const uiBaseUrl = 'https://the-internet.herokuapp.com';
+const apiBaseUrl = 'https://jsonplaceholder.typicode.com';
 
 export default defineConfig({
   features: 'features/**/*.feature',
   steps: ['src/support/hooks.ts', 'src/steps/**/*.ts'],
   dataDir: 'data',
+  // Browser per worker, context + page per scenario, API request context: all from the plugin.
+  // Run headed with -D headed=true, another browser with -D browser=firefox.
+  plugins: [
+    axios({ baseURL: apiBaseUrl, attach: 'only-on-failure' }), // API client for mixed UI + API scenarios: `api`
+    playwright({
+      browser: 'chromium',
+      screenshot: 'only-on-failure',
+      trace: 'only-on-failure', // reports/playwright/traces/*.zip, open with: npx playwright show-trace <file>
+      testIdAttribute: 'data-test', // SauceDemo's test ids: page.getByTestId('login-button')
+      expectTimeoutMs: 7_000, // retrying `expect` assertions
+      actionTimeoutMs: 10_000,
+      context: { baseURL: uiBaseUrl, ignoreHTTPSErrors: true, viewport: { width: 1440, height: 900 } },
+      request: {
+        baseURL: apiBaseUrl,
+        extraHTTPHeaders: { Accept: 'application/json', 'User-Agent': 'bddx-playwright-showcase' },
+        timeout: 15_000,
+      },
+    }),
+  ],
   workers: 4,
   pool: 'process',
   stepTimeoutMs: 15_000,
@@ -11,12 +35,13 @@ export default defineConfig({
   runTimeout: '5m',
   logLevel: 'info',
   params: {
-    uiBaseUrl: 'https://the-internet.herokuapp.com',
-    apiBaseUrl: 'https://jsonplaceholder.typicode.com',
+    uiBaseUrl,
+    apiBaseUrl,
     sauceBaseUrl: 'https://www.saucedemo.com',
     todoBaseUrl: 'https://demo.playwright.dev/todomvc',
     dummyApiBaseUrl: 'https://dummyjson.com',
-    headless: 'true',
+    independentUiBaseUrl: 'https://playwright.dev',
+    independentApiBaseUrl: 'https://httpbin.org',
   },
   retry: {
     scenario: 1,
@@ -38,11 +63,13 @@ export default defineConfig({
     },
     todoMvc: { match: '@todomvc', mode: 'parallel', workers: 2, dependsOn: ['health'], timeout: '2m' },
     dummyJson: { match: '@dummyjson', mode: 'serial', dependsOn: ['health'], timeout: '2m' },
+    mixed: { match: '@mixed', mode: 'parallel', workers: 2, dependsOn: ['health'], timeout: '3m' },
   },
   validation: {
     allowedTagKeys: [
       'api', 'capture', 'dummyjson', 'health', 'jsonplaceholder', 'owner', 'saucedemo', 'smoke',
       'the-internet', 'todomvc', 'ui',
+      'independent', 'plugin', 'reuseContext', 'mixed',
     ],
   },
   reporters: [

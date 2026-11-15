@@ -1,18 +1,14 @@
 import { strict as assert } from 'node:assert';
-import { CONTEXT, Given, Steps, Then, When, type StepContext } from '@bddx/runtime';
-import { page, requiredParam } from '../support/world.js';
+import { CONTEXT, Given, Steps, Then, When, inject } from '@bddx/runtime';
+import { requiredParam } from '../support/world.js';
 
 type CheckState = 'checked' | 'unchecked';
 
 @Steps()
 export class InternetUiSteps {
-  static inject = [CONTEXT] as const;
-
-  constructor(private readonly ctx: StepContext) {}
-
-  private get page() {
-    return page(this.ctx);
-  }
+  private readonly ctx = inject(CONTEXT);
+  private readonly page = inject('page');
+  private readonly expect = inject('expect'); // Playwright's retrying assertions
 
   @Given('the UI base URL is configured', { concurrent: false })
   configured() {
@@ -27,12 +23,12 @@ export class InternetUiSteps {
 
   @Then('the page heading is {string}', { concurrent: false })
   async heading(expected: string) {
-    assert.equal((await this.page.locator('h1, h2').first().textContent())?.trim(), expected);
+    await this.expect(this.page.locator('h1, h2').first()).toHaveText(expected);
   }
 
   @Then('the page has at least {int} example links', { concurrent: false })
   async linkCount(minimum: number) {
-    assert.ok(await this.page.locator('#content a').count() >= minimum);
+    await this.expect.poll(() => this.page.locator('#content a').count()).toBeGreaterThanOrEqual(minimum);
   }
 
   @When('I follow the example link {string}', { concurrent: false })
@@ -63,7 +59,8 @@ export class InternetUiSteps {
 
   @Then('checkbox {int} is {word}', { concurrent: false })
   async checkboxState(number: number, state: CheckState) {
-    assert.equal(await this.page.locator('input[type="checkbox"]').nth(number - 1).isChecked(), state === 'checked');
+    const box = this.page.locator('input[type="checkbox"]').nth(number - 1);
+    await (state === 'checked' ? this.expect(box).toBeChecked() : this.expect(box).not.toBeChecked());
   }
 
   @When('I set checkbox {int} to {word}', { concurrent: false })
@@ -78,7 +75,7 @@ export class InternetUiSteps {
 
   @Then('dropdown option {string} is selected', { concurrent: false })
   async selectedOption(option: string) {
-    assert.equal(await this.page.locator('#dropdown option:checked').textContent(), option);
+    await this.expect(this.page.locator('#dropdown option:checked')).toHaveText(option);
   }
 
   @When('I enter number {string}', { concurrent: false })
@@ -88,7 +85,7 @@ export class InternetUiSteps {
 
   @Then('the number input value is {string}', { concurrent: false })
   async numberValue(expected: string) {
-    assert.equal(await this.page.locator('input[type="number"]').inputValue(), expected);
+    await this.expect(this.page.locator('input[type="number"]')).toHaveValue(expected);
   }
 
   @When('I press keyboard key {string}', { concurrent: false })
@@ -98,7 +95,7 @@ export class InternetUiSteps {
 
   @Then('the key result contains {string}', { concurrent: false })
   async keyResult(expected: string) {
-    assert.match(await this.page.locator('#result').innerText(), new RegExp(expected));
+    await this.expect(this.page.locator('#result')).toContainText(new RegExp(expected));
   }
 
   @When('I log in with username {string} and password {string}', { concurrent: false })
@@ -110,7 +107,7 @@ export class InternetUiSteps {
 
   @Then('the login message contains {string}', { concurrent: false })
   async loginMessage(expected: string) {
-    assert.ok((await this.page.locator('#flash').innerText()).includes(expected));
+    await this.expect(this.page.locator('#flash')).toContainText(expected);
   }
 
   @When('I add {int} elements', { concurrent: false })
@@ -122,7 +119,7 @@ export class InternetUiSteps {
 
   @Then('{int} delete buttons are displayed', { concurrent: false })
   async deleteButtons(expected: number) {
-    assert.equal(await this.page.getByRole('button', { name: 'Delete' }).count(), expected);
+    await this.expect(this.page.getByRole('button', { name: 'Delete' })).toHaveCount(expected);
   }
 
   @When('I set the horizontal slider to {string}', { concurrent: false })
@@ -135,6 +132,6 @@ export class InternetUiSteps {
 
   @Then('the horizontal slider value is {string}', { concurrent: false })
   async sliderValue(expected: string) {
-    assert.equal(await this.page.locator('#range').textContent(), expected);
+    await this.expect(this.page.locator('#range')).toHaveText(expected);
   }
 }

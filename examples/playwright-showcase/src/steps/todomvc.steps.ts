@@ -1,104 +1,83 @@
-import { strict as assert } from 'node:assert';
-import { Given, Then, When, type DataTable, type StepContext } from '@bddx/runtime';
-import type { Locator } from 'playwright';
-import { page, requiredParam } from '../support/world.js';
+import { Given, Then, When, type DataTable } from '@bddx/runtime';
+import { TodoMvcPage } from '../pages/todomvc.page.js';
+import { requiredParam } from '../support/world.js';
 
 Given('the TodoMVC application is open', async (ctx) => {
-  await page(ctx).goto(requiredParam(ctx, 'todoBaseUrl'), { waitUntil: 'domcontentloaded' });
+  await new TodoMvcPage(ctx.page).open(requiredParam(ctx, 'todoBaseUrl'));
 });
 
 Given('TodoMVC contains items {string} and {string}', async (ctx, first: string, second: string) => {
-  await addTodo(ctx, first);
-  await addTodo(ctx, second);
+  await new TodoMvcPage(ctx.page).addTodos([first, second]);
 });
 
 Given('TodoMVC contains items {string}, {string} and {string}', async (ctx, first: string, second: string, third: string) => {
-  await addTodo(ctx, first);
-  await addTodo(ctx, second);
-  await addTodo(ctx, third);
+  await new TodoMvcPage(ctx.page).addTodos([first, second, third]);
 });
 
 When('I add TodoMVC item {string}', async (ctx, title: string) => {
-  await addTodo(ctx, title);
+  await new TodoMvcPage(ctx.page).addTodo(title);
 });
 
 When('I add these TodoMVC items:', async (ctx, table: DataTable) => {
-  for (const row of table.hashes()) await addTodo(ctx, row['title'] ?? '');
+  await new TodoMvcPage(ctx.page).addTodos(table.hashes().map((row) => row['title'] ?? ''));
 });
 
 When('I complete TodoMVC item {string}', async (ctx, title: string) => {
-  await todo(ctx, title).locator('.toggle').check();
+  await new TodoMvcPage(ctx.page).complete(title);
 });
 
 When('I delete TodoMVC item {string}', async (ctx, title: string) => {
-  const item = todo(ctx, title);
-  await item.hover();
-  await item.locator('.destroy').click();
+  await new TodoMvcPage(ctx.page).delete(title);
 });
 
 When('I select TodoMVC filter {string}', async (ctx, filter: string) => {
-  await page(ctx).getByRole('link', { name: filter, exact: true }).click();
-  await page(ctx).getByRole('link', { name: filter, exact: true }).waitFor({ state: 'visible' });
-  await page(ctx).locator('a.selected').filter({ hasText: filter }).waitFor();
+  await new TodoMvcPage(ctx.page).selectFilter(filter);
 });
 
 When('I clear completed TodoMVC items', async (ctx) => {
-  await page(ctx).locator('.clear-completed').click();
+  await new TodoMvcPage(ctx.page).clearCompleted();
 });
 
 When('I mark all TodoMVC items complete', async (ctx) => {
-  await page(ctx).locator('.toggle-all').check();
+  await new TodoMvcPage(ctx.page).markAllComplete();
 });
 
 When('I rename TodoMVC item {string} to {string}', async (ctx, current: string, next: string) => {
-  const item = todo(ctx, current);
-  await item.locator('label').dblclick();
-  await item.locator('.edit').fill(next);
-  await item.locator('.edit').press('Enter');
+  await new TodoMvcPage(ctx.page).rename(current, next);
 });
 
 When('I reload TodoMVC', async (ctx) => {
-  await page(ctx).reload({ waitUntil: 'domcontentloaded' });
+  await new TodoMvcPage(ctx.page).reload();
 });
 
 Then('TodoMVC displays {int} todo items', async (ctx, expected: number) => {
-  assert.equal(await page(ctx).locator('.todo-list li').count(), expected);
+  await ctx.expect(new TodoMvcPage(ctx.page).items).toHaveCount(expected);
 });
 
 Then('TodoMVC displays 1 todo item', async (ctx) => {
-  assert.equal(await page(ctx).locator('.todo-list li').count(), 1);
+  await ctx.expect(new TodoMvcPage(ctx.page).items).toHaveCount(1);
 });
 
 Then('TodoMVC displays {int} visible todo items', async (ctx, expected: number) => {
-  assert.equal(await page(ctx).locator('.todo-list li').count(), expected);
+  await ctx.expect(new TodoMvcPage(ctx.page).visibleItems).toHaveCount(expected);
 });
 
 Then('TodoMVC displays {int} completed items', async (ctx, expected: number) => {
-  assert.equal(await page(ctx).locator('.todo-list li.completed').count(), expected);
+  await ctx.expect(new TodoMvcPage(ctx.page).completedItems).toHaveCount(expected);
 });
 
 Then('TodoMVC contains item {string}', async (ctx, title: string) => {
-  assert.equal(await todo(ctx, title).count(), 1);
+  await ctx.expect(new TodoMvcPage(ctx.page).item(title)).toHaveCount(1);
 });
 
 Then('TodoMVC does not contain item {string}', async (ctx, title: string) => {
-  assert.equal(await todo(ctx, title).count(), 0);
+  await ctx.expect(new TodoMvcPage(ctx.page).item(title)).toHaveCount(0);
 });
 
 Then('TodoMVC item {string} is completed', async (ctx, title: string) => {
-  assert.ok((await todo(ctx, title).getAttribute('class'))?.split(/\s+/).includes('completed'));
+  await ctx.expect(new TodoMvcPage(ctx.page).item(title)).toHaveClass(/completed/);
 });
 
 Then('the TodoMVC counter says {string}', async (ctx, expected: string) => {
-  assert.equal((await page(ctx).locator('.todo-count').innerText()).trim(), expected);
+  await ctx.expect(new TodoMvcPage(ctx.page).counter).toHaveText(expected);
 });
-
-async function addTodo(ctx: StepContext, title: string): Promise<void> {
-  const input = page(ctx).locator('.new-todo');
-  await input.fill(title);
-  await input.press('Enter');
-}
-
-function todo(ctx: StepContext, title: string): Locator {
-  return page(ctx).locator('.todo-list li').filter({ has: page(ctx).locator('label', { hasText: title }) });
-}

@@ -1,10 +1,5 @@
-import type { APIRequestContext, Browser, BrowserContext, Page } from 'playwright';
 import type { RunContext, StepContext } from '@bddx/runtime';
 
-export const BROWSER = 'playwright.browser';
-export const API = 'playwright.api';
-export const BROWSER_CONTEXT = 'playwright.browserContext';
-export const PAGE = 'playwright.page';
 export const RESPONSE = 'playwright.response';
 export const HEALTH_STATUS = 'health.status';
 
@@ -13,22 +8,6 @@ export interface ResponseSnapshot {
   headers: Record<string, string>;
   body: unknown;
   url: string;
-}
-
-export function browser(ctx: RunContext): Browser {
-  return ctx.run.get<Browser>(BROWSER);
-}
-
-export function api(ctx: RunContext): APIRequestContext {
-  return ctx.run.get<APIRequestContext>(API);
-}
-
-export function browserContext(ctx: StepContext): BrowserContext {
-  return ctx.state.get<BrowserContext>(BROWSER_CONTEXT);
-}
-
-export function page(ctx: StepContext): Page {
-  return ctx.state.get<Page>(PAGE);
 }
 
 export function response(ctx: StepContext): ResponseSnapshot {

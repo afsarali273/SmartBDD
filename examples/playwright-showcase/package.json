@@ -16,13 +16,17 @@
     "verify": "npm run build && npm run validate && npm test"
   },
   "dependencies": {
+    "@bddx/axios": "file:../../plugins/axios",
     "@bddx/cli": "file:../../packages/cli",
     "@bddx/core": "file:../../packages/core",
+    "@bddx/playwright": "file:../../plugins/playwright",
     "@bddx/reporters": "file:../../packages/reporters",
     "@bddx/runtime": "file:../../packages/runtime",
+    "axios": "^1.7.9",
     "playwright": "^1.65.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.20.5",
     "typescript": "~5.9.3"
   },

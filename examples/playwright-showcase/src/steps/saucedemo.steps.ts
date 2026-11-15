@@ -1,57 +1,55 @@
 import { strict as assert } from 'node:assert';
-import { Given, Then, When, type DataTable, type StepContext } from '@bddx/runtime';
-import type { Locator } from 'playwright';
-import { page, requiredParam } from '../support/world.js';
+import { Given, Then, When, type DataTable } from '@bddx/runtime';
+import { SauceDemoCartPage, SauceDemoInventoryPage, SauceDemoLoginPage, SauceDemoProductPage } from '../pages/saucedemo.page.js';
+import { requiredParam } from '../support/world.js';
 
 Given('the SauceDemo login page is open', async (ctx) => {
-  await page(ctx).goto(requiredParam(ctx, 'sauceBaseUrl'), { waitUntil: 'domcontentloaded' });
+  await new SauceDemoLoginPage(ctx.page).open(requiredParam(ctx, 'sauceBaseUrl'));
 });
 
 Given('I am signed in to SauceDemo as {string}', async (ctx, username: string) => {
-  await openAndLogin(ctx, username, 'secret_sauce');
-  await page(ctx).locator('[data-test="inventory-list"]').waitFor();
+  const loginPage = new SauceDemoLoginPage(ctx.page);
+  await loginPage.open(requiredParam(ctx, 'sauceBaseUrl'));
+  await loginPage.login(username, 'secret_sauce');
+  await new SauceDemoInventoryPage(ctx.page).waitUntilVisible();
 });
 
 When('I sign in to SauceDemo as {string} with password {string}', async (ctx, username: string, password: string) => {
-  await login(ctx, username, password);
+  await new SauceDemoLoginPage(ctx.page).login(username, password);
 });
 
 Then('the SauceDemo inventory page is displayed', async (ctx) => {
-  assert.equal(new URL(page(ctx).url()).pathname, '/inventory.html');
-  await page(ctx).locator('[data-test="inventory-list"]').waitFor();
+  await ctx.expect(ctx.page).toHaveURL(/\/inventory\.html$/);
+  await new SauceDemoInventoryPage(ctx.page).waitUntilVisible();
 });
 
 Then('the SauceDemo login error contains {string}', async (ctx, expected: string) => {
-  assert.ok((await page(ctx).locator('[data-test="error"]').innerText()).includes(expected));
+  await ctx.expect(new SauceDemoLoginPage(ctx.page).error).toContainText(expected);
 });
 
 When('I log out of SauceDemo', async (ctx) => {
-  await page(ctx).locator('#react-burger-menu-btn').click();
-  await page(ctx).locator('#logout_sidebar_link').click();
+  await new SauceDemoLoginPage(ctx.page).logout();
 });
 
 Then('the SauceDemo login page is displayed', async (ctx) => {
-  assert.equal(new URL(page(ctx).url()).pathname, '/');
-  await page(ctx).locator('[data-test="login-button"]').waitFor({ state: 'visible' });
+  await ctx.expect(ctx.page).toHaveURL(/\/$/);
+  await new SauceDemoLoginPage(ctx.page).waitUntilVisible();
 });
 
 Then('SauceDemo displays {int} inventory products', async (ctx, expected: number) => {
-  assert.equal(await page(ctx).locator('[data-test="inventory-item"]').count(), expected);
+  await ctx.expect(new SauceDemoInventoryPage(ctx.page).items).toHaveCount(expected);
 });
 
 When('I sort SauceDemo inventory by {string}', async (ctx, label: string) => {
-  await page(ctx).locator('[data-test="product-sort-container"]').selectOption({ label });
+  await new SauceDemoInventoryPage(ctx.page).sortBy(label);
 });
 
 Then('the first SauceDemo product is {string}', async (ctx, expected: string) => {
-  assert.equal((await page(ctx).locator('[data-test="inventory-item-name"]').first().innerText()).trim(), expected);
+  await ctx.expect(new SauceDemoInventoryPage(ctx.page).firstName).toHaveText(expected);
 });
 
 When('I open SauceDemo product {string}', async (ctx, product: string) => {
-  const item = inventoryItem(ctx, product);
-  await item.locator('[data-test="inventory-item-name"]').click();
-  await page(ctx).waitForURL(/inventory-item\.html\?id=/);
-  await page(ctx).locator('[data-test="inventory-item-name"]').first().waitFor();
+  await new SauceDemoInventoryPage(ctx.page).openProduct(product);
 });
 
 Then('the SauceDemo product detail name is {string}', async (ctx, expected: string) => {
@@ -60,41 +58,25 @@ Then('the SauceDemo product detail name is {string}', async (ctx, expected: stri
     'Sauce Labs Bike Light': '0',
     'Sauce Labs Bolt T-Shirt': '1',
   };
-  assert.equal(new URL(page(ctx).url()).pathname, '/inventory-item.html');
-  assert.equal(new URL(page(ctx).url()).searchParams.get('id'), ids[expected]);
+  const productPage = new SauceDemoProductPage(ctx.page);
+  assert.equal(productPage.pathname(), '/inventory-item.html');
+  assert.equal(productPage.productId(), ids[expected]);
 });
 
 When('I add SauceDemo product {string} to the cart', async (ctx, product: string) => {
-  await inventoryItem(ctx, product).getByRole('button', { name: 'Add to cart' }).click();
+  await new SauceDemoInventoryPage(ctx.page).addProduct(product);
 });
 
 When('I add these SauceDemo products to the cart:', async (ctx, table: DataTable) => {
-  for (const row of table.hashes()) {
-    await inventoryItem(ctx, row['product'] ?? '').getByRole('button', { name: 'Add to cart' }).click();
-  }
+  await new SauceDemoInventoryPage(ctx.page).addProducts(table.hashes().map((row) => row['product'] ?? ''));
 });
 
 Then('the SauceDemo cart badge is {int}', async (ctx, expected: number) => {
-  assert.equal(Number(await page(ctx).locator('[data-test="shopping-cart-badge"]').innerText()), expected);
+  await ctx.expect(new SauceDemoInventoryPage(ctx.page).badge).toHaveText(String(expected));
 });
 
 Then('the SauceDemo cart contains {string}', async (ctx, product: string) => {
-  await page(ctx).locator('[data-test="shopping-cart-link"]').click();
-  const names = await page(ctx).locator('[data-test="inventory-item-name"]').allInnerTexts();
+  const cartPage: SauceDemoCartPage = await new SauceDemoInventoryPage(ctx.page).openCart();
+  const names = await cartPage.productNames();
   assert.ok(names.includes(product));
 });
-
-async function openAndLogin(ctx: StepContext, username: string, password: string): Promise<void> {
-  await page(ctx).goto(requiredParam(ctx, 'sauceBaseUrl'), { waitUntil: 'domcontentloaded' });
-  await login(ctx, username, password);
-}
-
-async function login(ctx: StepContext, username: string, password: string): Promise<void> {
-  await page(ctx).locator('[data-test="username"]').fill(username);
-  await page(ctx).locator('[data-test="password"]').fill(password);
-  await page(ctx).locator('[data-test="login-button"]').click();
-}
-
-function inventoryItem(ctx: StepContext, product: string): Locator {
-  return page(ctx).locator('[data-test="inventory-item"]').filter({ hasText: product });
-}

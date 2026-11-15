@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { Given, Then, When, defineParameterType, type DataTable, type DocString } from '@bddx/runtime';
-import { api, requiredParam, response, snapshotResponse } from '../support/world.js';
+import { requiredParam, response, snapshotResponse } from '../support/world.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -15,36 +15,36 @@ Given('the API base URL is configured', (ctx) => {
 });
 
 When('I GET API path {string}', async (ctx, path: string) => {
-  await snapshotResponse(ctx, await api(ctx).get(path));
+  await snapshotResponse(ctx, await ctx.request.get(path));
 });
 
 When('I GET the {apiResource} API collection', async (ctx, resource: string) => {
-  await snapshotResponse(ctx, await api(ctx).get(`/${resource}`));
+  await snapshotResponse(ctx, await ctx.request.get(`/${resource}`));
 });
 
 When('I POST API path {string} with values:', async (ctx, path: string, table: DataTable) => {
   const row = table.hashes()[0];
   assert.ok(row, 'expected one data row');
   const data = { title: row['title'], body: row['body'], userId: Number(row['userId']) };
-  await snapshotResponse(ctx, await api(ctx).post(path, { data }));
+  await snapshotResponse(ctx, await ctx.request.post(path, { data }));
 });
 
 When('I PUT API path {string} with JSON:', async (ctx, path: string, body: DocString) => {
-  await snapshotResponse(ctx, await api(ctx).put(path, { data: JSON.parse(body.content) as unknown }));
+  await snapshotResponse(ctx, await ctx.request.put(path, { data: JSON.parse(body.content) as unknown }));
 });
 
 When('I PATCH API path {string} with title {string}', async (ctx, path: string, title: string) => {
-  await snapshotResponse(ctx, await api(ctx).patch(path, { data: { title } }));
+  await snapshotResponse(ctx, await ctx.request.patch(path, { data: { title } }));
 });
 
 When('I DELETE API path {string}', async (ctx, path: string) => {
-  await snapshotResponse(ctx, await api(ctx).delete(path));
+  await snapshotResponse(ctx, await ctx.request.delete(path));
 });
 
 When(/^I probe API post (?:\{\{i\}\}|\d+) of (?:\{\{n\}\}|\d+)$/, async (ctx) => {
   const id = ctx.step?.attempt ?? 1;
   const total = ctx.step?.of ?? 1;
-  const result = await api(ctx).get(`/posts/${id}`);
+  const result = await ctx.request.get(`/posts/${id}`);
   assert.equal(result.status(), 200);
   ctx.log.debug('Concurrent probe passed', { id, total, attempt: ctx.step?.attempt });
 });
