@@ -84,6 +84,17 @@ describe('scenario retry', () => {
     expect(seen).toEqual(['s:1:NetworkError: attempt 1', 's:2:NetworkError: attempt 2']);
   });
 
+  it('applies exponential backoff between scenario attempts', async () => {
+    const r = new SupportRegistry();
+    flakySteps(r);
+    const started = performance.now();
+    const { status } = await run(r, `Feature: B\n  Scenario: s\n    Given passes on attempt 3\n`, {}, {
+      retry: { scenario: 2, delayMs: 15, backoff: 2 },
+    });
+    expect(status('s')).toBe('passed');
+    expect(performance.now() - started).toBeGreaterThanOrEqual(40);
+  });
+
   it('dependents wait for the final attempt and see its exports only', async () => {
     const r = new SupportRegistry();
     r.defineStep('produce', (ctx: StepContext) => {
@@ -199,5 +210,45 @@ describe('scenario timeout', () => {
     const steps = of('stepFinished');
     expect(steps.map((e) => e.status)).toEqual(['passed', 'failed', 'skipped']);
     expect(steps[1]!.error!.message).toMatch(/Scenario "s" \(time budget 60 ms\) at step "wait 100ms" timed out/);
+  });
+});
+
+describe('cancellation and broader time budgets', () => {
+  it('cancels an in-flight step through ctx.signal and skips work not yet started', async () => {
+    const r = new SupportRegistry();
+    let exposed: AbortSignal | undefined;
+    r.defineStep('wait for cancellation', (ctx: StepContext) => {
+      exposed = ctx.signal;
+      return new Promise<void>(() => undefined);
+    });
+    r.defineStep('ok', () => {});
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('deployment cancelled')), 20);
+    const { status, of } = await run(
+      r,
+      `Feature: C\n  Scenario: running\n    Given wait for cancellation\n  Scenario: queued\n    Given ok\n`,
+      { workers: 1 },
+      { signal: controller.signal },
+    );
+    expect(exposed).toBe(controller.signal);
+    expect(status('running')).toBe('failed');
+    expect(status('queued')).toBe('skipped');
+    expect(of('scenarioFinished').find((e) => e.scenarioId.endsWith('running'))?.error?.message).toBe('deployment cancelled');
+    expect(of('scenarioFinished').find((e) => e.scenarioId.endsWith('queued'))?.reason).toContain('cancelled: deployment cancelled');
+  });
+
+  it('enforces a group time budget and skips remaining members', async () => {
+    const r = new SupportRegistry();
+    r.defineStep('wait {int}ms', (_ctx: StepContext, ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    r.defineStep('ok', () => {});
+    const { status, of } = await run(
+      r,
+      `Feature: G\n  @group:batch\n  Scenario: slow\n    Given wait 100ms\n  @group:batch\n  Scenario: queued\n    Given ok\n`,
+      { workers: 1, groups: { batch: { timeout: '25ms' } } },
+    );
+    expect(status('slow')).toBe('failed');
+    expect(status('queued')).toBe('skipped');
+    expect(of('scenarioFinished').find((e) => e.scenarioId.endsWith('slow'))?.error?.message).toContain('Group "batch" timed out after 25 ms');
+    expect(of('scenarioFinished').find((e) => e.scenarioId.endsWith('queued'))?.reason).toContain('group "batch" timed out after 25 ms');
   });
 });

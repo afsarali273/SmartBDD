@@ -104,7 +104,7 @@ bare tags). Effective tags = feature + rule + scenario + examples, de-duplicated
 | `context.ts` | `Store` (typed key/value) and `Scope` (store + LIFO `defer()` cleanups) |
 | `decorators.ts` | Class-based steps: `@Steps()` class decorator, pending-method collection, per-scenario DI container (`resolve`, `CONTEXT` token, `static inject`, `dispose()`) |
 | `datatable.ts` | `DataTable` (`raw/rows/hashes/rowsHash/asObjects/transpose`), `DocString` |
-| `signals.ts` | `PendingSignal`, `SkipSignal`, `TimeoutError`, `withTimeout()` |
+| `signals.ts` | `PendingSignal`, `SkipSignal`, `TimeoutError`, `CancellationError`, abort-aware `withTimeout()` / `abortableSleep()` |
 | `types.ts` | `StepContext`, `FeatureContext`, `RunContext`, `ScenarioInfo`, hook/step option types |
 
 **Step matching** (`SupportRegistry.match`):
@@ -121,6 +121,7 @@ The context is always first (no `this`), so arrow functions work and the shape p
 - `ctx.state`: scenario store (fresh per scenario and per attempt)
 - `ctx.feature`: feature store; `ctx.run`: run store
 - `ctx.params`: config `params` + CLI `-D`
+- `ctx.signal`: aborts for external cancellation, Ctrl+C, run timeout, or the scenario's group time budget
 - `ctx.scenario`: id, name, tags, meta, example values, attempt
 - `ctx.step`: current step (inside steps and step hooks)
 - `ctx.log()`, `ctx.attach(body, mediaType, name)`: emit `log` / `attachment` events tagged with scenario/step
@@ -136,9 +137,10 @@ the scenario scope closes. Run/feature/rule hooks cannot decorate methods (no pe
 **Trap:** never export a value named `then` from a package: its module namespace becomes thenable and
 `await import()` hangs (this happened with an early lowercase `then` decorator).
 
-**Hook levels implemented**: run (= suite: `BeforeAll`/`BeforeSuite`), feature, rule, scenario, step.
+**Hook levels implemented**: run (= suite: `BeforeAll`/`BeforeSuite`), worker, group, feature, rule, scenario, step.
 Hooks can be functions, instance methods of `@Steps()` classes (scenario/step levels), or **static methods at any level**
-(`@BeforeSuite() static start(ctx)`), registered on class definition without `@Steps()`. (Planned: worker, group in phase 3; attempt in phase 4.)
+(`@BeforeSuite() static start(ctx)`), registered on class definition without `@Steps()`. There is deliberately no
+attempt hook: scenario hooks already run per scenario attempt; step hooks use `eachAttempt`.
 - Tag filters: feature hooks → feature tags; rule hooks → rule tags; scenario/step hooks → scenario tags.
 - Order: before-hooks by `order` asc then registration; after-hooks exactly reversed.
 - `alwaysRun` (before-hooks): run even if an earlier before-hook at the same level failed.
@@ -161,6 +163,7 @@ Hooks can be functions, instance methods of `@Steps()` classes (scenario/step le
 | `ctx.skip(reason)` | step skipped, rest skipped, scenario skipped with reason |
 | undefined / ambiguous step | that status; rest skipped |
 | step/hook timeout (default 30 s) | failed with `TimeoutError` |
+| cancellation / run or group timeout | in-flight cancellable work fails; queued work is skipped; After hooks and cleanups still run |
 
 Scenario status = worst of its step and hook statuses (`failed > ambiguous > undefined > pending > skipped > passed`).
 Run success (strict, default): no scenario failed/pending/undefined/ambiguous and no run/feature/rule hook failed.
@@ -186,7 +189,8 @@ Run success (strict, default): no scenario failed/pending/undefined/ambiguous an
 | --- | --- |
 | `config.ts` | `BddxConfig`, `defineConfig`, `loadConfig()` (ts/mts/js/mjs/json), profiles, `mergeOptions()` (tags ANDed, params/groups/retry merged), `--set` (`applySetOverrides`, `OPTION_KEYS`) |
 | `run.ts` | `prepareRun()` (config → specs → selection → plan, incl. `--rerun-failed`), `runBddx()` pipeline (support code, reporters, Executor, process pool), `prepareWorker()`, `reportFromEvents()` (`bddx report`); `registerTypeScriptLoader()` (tsx `register()`) |
-| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run`, `list`, `snippets`, `plan`, `report` commands, help, exit codes |
+| `validate.ts` | Static checks: parse/config/plan errors, duplicate ids, undefined/ambiguous steps without running transformers, unused definitions, unmatched hooks, optional tag governance |
+| `main.ts` | Argument parsing (`node:util` `parseArgs`), `run`, `list`, `snippets`, `validate`, `plan`, `report` commands, help, exit codes |
 | `worker.ts` | Worker process entry for `pool: 'process'` (`serveWorker(prepareWorker)`) |
 | `bin.ts` | `#!/usr/bin/env node` entry |
 
@@ -272,6 +276,10 @@ once. Each attempt runs `eachAttempt` step hooks around the body, uses its own c
 | Merge reports | `bddx report a.ndjson b.ndjson -f html:… -f junit:…`: later streams win per scenario, recovered = flaky, summary recomputed | `core/src/events-merge.ts`, `reportFromEvents` |
 | Soft assertions | `ctx.soft.check(cond, msg)`, `ctx.soft.run(fn)`; the step fails at its end with all failures | `createSoftAssert`, `attemptOnce` |
 | Scenario time budget | `@timeout:<dur>` on a scenario / config `scenarioTimeout`; each step's timeout is capped to the time left; after the deadline remaining steps are skipped | `runScenario`, `runStep` |
+| Group time budget | `groups.x.timeout`; starts with the first member of each group attempt, aborts in-flight members and skips queued members | scheduler group budget controllers |
+| Run cancellation/time budget | config `runTimeout`, CLI `--run-timeout`, programmatic `RunRequest.signal`, Ctrl+C → exit 130; exposed as `ctx.signal` | CLI abort controller + abort-aware executor |
+| Retry backoff | config `retry.backoff` multiplies `retry.delay` after each scenario failure | `Executor.runNode` |
+| Worker crash retry | config `retry.workerCrash` / `--worker-crash-retry`; a fresh process retries only `WorkerCrashedError` | `Executor.runRemote` + `ProcessPool` |
 
 **Scenario retry semantics.** Each attempt is a full scenario run: fresh scenario store and DI instances, Background,
 Before/After hooks, exports reset (dependents only ever see the final attempt's exports). Only `failed` is retried
@@ -326,11 +334,33 @@ parent (coordinator)                                   worker process wK (forked
   by the parent) or an external system (file, DB). Module-level variables are per process.
 - A scenario's attempts (scenario retry) stay in one process; group retry is decided by the parent and may re-run members
   on any lane. Attempt numbers and "failed before" (flaky) travel with each request.
-- Worker crash (exit / kill) → that scenario fails with `WorkerCrashedError`; the lane respawns a fresh process on its
-  next node (BeforeWorker runs again). Worker init failure (support code throws, plan mismatch) → `WorkerInitError`,
+- Worker crash (exit / kill) → that scenario fails with `WorkerCrashedError`; with `retry.workerCrash` it is retried on
+  a fresh process, otherwise the lane respawns on its next node. Worker init failure (support code throws, plan mismatch) → `WorkerInitError`,
   the run stops scheduling and fails.
 - Env in workers: `BDDX_WORKER_ID` (`w1`…), `BDDX_WORKER_INDEX` (1…), e.g. for per-worker ports or test accounts.
-- `--dry-run` always uses the inline pool. Ctrl+C kills the workers; a worker exits when the parent disconnects.
+- `--dry-run` always uses the inline pool. Ctrl+C aborts the run, flushes hooks/reporters where possible, kills process
+  workers, and exits 130; a worker also exits when the parent disconnects.
+
+## 2c-quater. Real Playwright project
+
+`examples/playwright-showcase` is a standalone TypeScript consumer project rather than a framework package. It depends
+on the local built `@bddx/*` packages and uses bddx for discovery, planning, execution, retries and reporting;
+Playwright supplies only Chromium and `APIRequestContext`.
+
+- `BeforeWorker` launches one browser and creates one API request context in each process-local run store.
+- `Before('@ui')` creates an isolated browser context and page in scenario state; reverse-ordered `After` hooks attach
+  selected screenshots before closing the context.
+- `concurrent:false` protects every browser step; API steps opt into concurrent `@repeat` safely.
+- A serial health group gates separate UI/API groups. The process-pool plan uses four workers, with independent group
+  caps and time budgets. Scenario dependencies consume health exports across processes.
+- The project covers 119 scenarios / 504 steps across 11 feature files against public demo targets. Its single plan
+  intentionally mixes serial SauceDemo/DummyJSON groups with parallel The Internet/JSONPlaceholder/TodoMVC groups.
+  Because those targets and the Chromium
+  download require network access, its `npm run verify` is intentionally independent of the repository's offline root
+  verification.
+
+This proves the Phase 1 real-project gate and provides the reference implementation for a future reusable Playwright
+plugin. Automatic failure-only trace capture still belongs to that package-level Phase 6 work.
 
 ## 2d. Configuration sources and precedence
 

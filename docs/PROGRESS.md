@@ -3,25 +3,28 @@
 The single source of truth for "where are we" and the session history. Update it at the end of every work session
 (see CLAUDE.md). For a feature-by-feature summary of what is done and what remains, see [STATUS.md](STATUS.md).
 
-## Current state (2026-11-15, session 5)
+## Current state (2026-11-15, session 8)
 
 - **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
 - **Phase 3:** done (incl. worker processes `--pool process`) except `@requires`, timeline view, `workerStarted` events.
-- **Phase 4:** done: scenario retry (+ filters, analyzer), group retry, flaky, quarantine, rerun-failed + `bddx report`
-  merge, soft assertions, scenario time budget. Plus step-level `@repeat`/`@retry` (done earlier).
-- **Health:** `npm run verify` green on the user's Mac (148 tests + examples: basic, orchestration (inline + process), resilience).
+- **Phase 4:** done: scenario/group retry, backoff, worker-crash retry, flaky, quarantine, rerun/merge, soft assertions,
+  scenario/group/run time budgets, cancellation and graceful Ctrl+C. Plus step repeat/retry.
+- **DX:** `bddx validate` statically checks specs, config, plans, ids, step coverage, unused glue, hooks and governed tags.
+- **Real-project gate:** `examples/playwright-showcase` passes 119 Playwright UI/API scenarios (504 steps) across 11
+  feature files through bddx using four process workers. One command mixes serial and parallel target groups. It is
+  optional/live and therefore kept outside root `npm run verify`.
+- **Health:** `npm run verify` green on the user's Mac (157 tests + examples: basic, orchestration (inline + process), resilience).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 - **Framing (owner):** an automation framework with BDD-style specs, not BDD-purist. Practical features first.
 
 ## Next up
 
-1. **Phase 5 (reporting/DX):** HTML v2 (timeline per worker lane using scenarioStarted.workerId, plan graph via mermaid),
-   history + flakiness trend across runs, Cucumber Messages adapter, debug mode (`--inspect` + one worker), VS Code ext.
-2. **Phase 6:** plugin API, Playwright integration (browser per worker via BeforeWorker, page per scenario,
-   screenshot/trace on failure, browser steps `concurrent:false`), HTTP step library, Allure, AI step catalogue + MCP.
-3. Leftovers: text composite steps + Phase 2 gate; `@requires:<file>`; events `workerStarted`/`waitedForMs`;
-   group time budget; exponential backoff for scenario retries.
+1. **Phase 6:** plugin API; extract the Playwright showcase lifecycle into a reusable integration with automatic
+   failure screenshots/traces; HTTP step library, Allure, AI step catalogue + MCP.
+2. **Non-reporting DX:** Cucumber Messages adapter, debug mode (`--inspect` + one worker), VS Code extension, watch mode,
+   CI sharding. HTML v2/history remain planned, but the owner asked to focus outside reporting for now.
+3. Leftovers: text composite steps + Phase 2 gate; `@requires:<file>`; events `workerStarted`/`waitedForMs`.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
 Do not start it without the owner.
@@ -33,6 +36,8 @@ Do not start it without the owner.
 - Process pool: feature/rule/group hooks run once per process that runs a member; `ctx.feature`/`ctx.groups` stores
   and module-level variables are per process. Cross-process state: `ctx.export`/`ctx.from` or an external system.
 - A worker crash mid-scenario loses that process's After* hooks (the scenario fails; the lane respawns).
+- Inline JavaScript promises are cooperative: framework waits abort promptly, but user operations should consume
+  `ctx.signal`; process-pool cancellation terminates the lane.
 - Console reporter prints logs (by `--log-level`) but not attachments (those are in HTML/NDJSON).
 - Run-level hook failures are summarised under "Hook failures:" in console output, not per scenario.
 - `bddx list` does not load support code, so it cannot flag undefined steps (use `--dry-run`).
@@ -175,3 +180,38 @@ Worked directly in the user's folder via device shell.
   reference) and everything remaining (next phases, leftovers, known limitations, parked items, idea sources).
 - Brought README, CLAUDE.md, ROADMAP, IMPLEMENTATION (package tables: plan/, step-tags, events-merge, scheduler, pool,
   logger, worker.ts) and this file in line with the code; CLI help lists the `html` reporter.
+
+### 2026-11-15: Session 6 (`bddx validate` + resilience completion)
+
+- cli: new `bddx validate` / `validateProject()` with structured errors and warnings for parse/config/plan problems,
+  duplicate ids, undefined/ambiguous steps, unused definitions, unmatched hooks and optional tag governance;
+  `--fail-on-warnings`. Matching does not run parameter transformers.
+- runtime/core: `ctx.signal`, external cancellation, abort-aware hooks/steps/delays, group-attempt budgets, run budget,
+  graceful Ctrl+C (exit 130), scenario retry backoff, worker-crash retry on a fresh process; new config
+  `groups.x.timeout`, `runTimeout`, `retry.backoff`, `retry.workerCrash` and CLI flags.
+- tests: validation fixture, inline and process time budgets, programmatic cancellation, Ctrl+C, retry backoff and
+  worker crash recovery. 157 tests pass; ADR-022 records the semantics.
+
+### 2026-11-15: Session 7 (real Playwright UI/API project)
+
+- added standalone `examples/playwright-showcase` TypeScript project using local bddx packages and Playwright 1.65.1;
+  bddx remains the runner, while Playwright provides Chromium and its API request context.
+- 66 scenarios / 289 steps: 30 UI scenarios against The Internet, 33 API scenarios against JSONPlaceholder, two
+  prerequisite health scenarios and one deterministic scenario-retry demonstration.
+- exercises process workers, worker/group/feature/scenario/step hooks, browser-per-worker/page-per-scenario lifecycle,
+  groups/dependencies/exports, outlines, CSV `@data`, tables, doc strings, custom parameter types, class DI, soft
+  assertions, repeat concurrency, retry/flaky reporting, budgets, logging, screenshots/JSON attachments and reports.
+- verification: standalone TypeScript compile and `bddx validate --fail-on-warnings` are clean; complete live run passed
+  all 66 scenarios (one deliberately flaky pass on attempt 2). Root unit/conformance/example verification remains
+  separate so offline CI is deterministic. ADR-023 records target and isolation choices.
+
+### 2026-11-15: Session 8 (mixed serial/parallel expansion)
+
+- added six feature files and 53 new scenarios: SauceDemo authentication/inventory (20, serial), TodoMVC lifecycle/
+  filtering (15, parallel), DummyJSON products/users (15, serial), plus three additional target-health rows.
+- expanded the single plan to six named groups: serial `health`, `sauceDemo`, `dummyJson`; parallel `theInternet`,
+  `jsonPlaceholder`, `todoMvc`, with group dependencies and worker caps visible in `bddx plan`.
+- live verification: `bddx validate` reports 119 scenarios / 504 steps / 87 definitions with zero errors or warnings;
+  complete process-pool run passes all 119 scenarios and 504 steps, including the intentional retry/flaky scenario.
+- corrected public-target selector timing and documented the expanded matrix in the showcase README, status, roadmap and
+  implementation notes.

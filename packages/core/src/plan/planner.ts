@@ -1,5 +1,6 @@
 import type { ScenarioInstance } from '../model.js';
 import { compileTagExpression } from '../tags.js';
+import { parseDuration } from '../step-tags.js';
 import type { GroupConfig, Plan, PlanDependency, PlanError, PlanGroup, PlanNode, PlanOptions } from './types.js';
 
 interface RawDep {
@@ -165,8 +166,26 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
 
   // --- groups
   const groups = new Map<string, PlanGroup>();
+  const groupTimeouts = new Map<string, number | undefined>();
   const DEFAULT = 'default';
   const useDefaultGroup = options.defaultMode !== undefined || DEFAULT in configs;
+  const groupTimeout = (name: string, c: GroupConfig): number | undefined => {
+    if (groupTimeouts.has(name)) return groupTimeouts.get(name);
+    if (c.timeout === undefined) {
+      groupTimeouts.set(name, undefined);
+      return undefined;
+    }
+    try {
+      const ms = typeof c.timeout === 'number' ? c.timeout : parseDuration(c.timeout);
+      if (!Number.isFinite(ms) || ms <= 0) throw new Error('must be greater than 0');
+      groupTimeouts.set(name, ms);
+      return ms;
+    } catch (e) {
+      errors.push({ message: `groups.${name}.timeout: ${(e as Error).message}` });
+      groupTimeouts.set(name, undefined);
+      return undefined;
+    }
+  };
   const ensureGroup = (name: string): PlanGroup => {
     let g = groups.get(name);
     if (!g) {
@@ -182,6 +201,7 @@ export function buildPlan(all: readonly ScenarioInstance[], selected: readonly S
         retry: c.retry ?? 0,
         retryMembers: c.retryMembers ?? 'all',
         configured: name in configs,
+        ...(groupTimeout(name, c) !== undefined ? { timeoutMs: groupTimeout(name, c) } : {}),
         ...(name === DEFAULT && !(name in configs) ? { implicit: true } : {}),
         ...(c.workers !== undefined ? { workers: c.workers } : {}),
       };

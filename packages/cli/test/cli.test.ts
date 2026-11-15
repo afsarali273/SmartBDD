@@ -2,7 +2,7 @@
  * End-to-end tests of the built CLI (packages/cli/dist). Run `npm run build` first;
  * these tests are skipped when the build output is missing.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ const orchestration = fileURLToPath(new URL('../../../examples/orchestration/', 
 const resilience = fileURLToPath(new URL('../../../examples/resilience/', import.meta.url));
 const rerunProject = fileURLToPath(new URL('./fixtures/rerun-project/', import.meta.url));
 const poolProject = fileURLToPath(new URL('./fixtures/pool-project/', import.meta.url));
+const validateProject = fileURLToPath(new URL('./fixtures/validate-project/', import.meta.url));
 
 function bddx(...args: string[]) {
   return bddxIn(project, ...args);
@@ -67,6 +68,26 @@ describe.skipIf(!built)('bddx CLI (built)', () => {
     expect(r.out).toContain('// 1 undefined step pattern(s)');
     expect(r.out).toContain('// used at: features/mixed.feature:11');
     expect(r.out).toContain(`Given('something nobody wrote', async (ctx) => {`);
+  });
+
+  it('validate checks step coverage without executing scenarios', () => {
+    const bad = bddx('validate');
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain('ERROR [undefined-step] features/mixed.feature:11 Undefined step: Given something nobody wrote');
+    expect(bad.out).toMatch(/Validated 4 scenario\(s\), 4 step\(s\), \d+ definition\(s\): 2 error\(s\)/);
+
+    const clean = bddxIn(orchestration, 'validate', '--fail-on-warnings');
+    expect(clean.code, clean.out + clean.err).toBe(0);
+    expect(clean.out).toContain('Validated 9 scenario(s), 17 step(s)');
+    expect(clean.out).toContain('0 error(s), 0 warning(s)');
+
+    const detailed = bddxIn(validateProject, 'validate', '--fail-on-warnings');
+    expect(detailed.code).toBe(1);
+    expect(detailed.out).toContain('ERROR [ambiguous-step]');
+    expect(detailed.out).toContain('ERROR [undefined-step]');
+    expect(detailed.out).toContain('WARN  [unused-step]');
+    expect(detailed.out).toContain('WARN  [unmatched-hook]');
+    expect(detailed.out).toContain('WARN  [unknown-tag]');
   });
 
   it('list prints ids and tags', () => {
@@ -246,6 +267,45 @@ describe.skipIf(!built)('applySetOverrides', () => {
       expect(r.code).toBe(1);
       expect(r.out).toMatch(/worker w\d \(pid \d+\) exited unexpectedly \(code 3\)/);
       expect(r.out).toContain('8 scenarios (7 passed, 1 failed)');
+    });
+
+    it('enforces a group budget in the process pool by cancelling the lane', () => {
+      const r = bddxIn(
+        poolProject,
+        'run',
+        '--name',
+        'Crashes when asked',
+        '-D',
+        'hang=yes',
+        '--set',
+        'groups.slow.match=@crash',
+        '--set',
+        'groups.slow.timeout=30ms',
+      );
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('Group "slow" timed out after 30 ms');
+    });
+
+    it('enforces a run-wide timeout across process workers', () => {
+      const r = bddxIn(poolProject, 'run', '--name', 'Busy', '--run-timeout', '15ms');
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('Run timed out after 15 ms');
+    });
+
+    it('handles Ctrl+C gracefully and returns exit code 130', async () => {
+      const child = spawn(process.execPath, [bin, 'run', '--name', 'Crashes when asked', '-D', 'hang=yes'], {
+        cwd: poolProject,
+        env: { ...process.env, NO_COLOR: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.setEncoding('utf8').on('data', (s) => (output += s));
+      child.stderr.setEncoding('utf8').on('data', (s) => (output += s));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      child.kill('SIGINT');
+      const code = await new Promise<number | null>((resolve) => child.once('close', resolve));
+      expect(code, output).toBe(130);
+      expect(output).toContain('Interrupted by SIGINT');
     });
 
     it('a worker that cannot start stops the run with the cause', () => {

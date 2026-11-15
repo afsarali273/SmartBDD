@@ -34,6 +34,11 @@ export type MatchResult =
   | { kind: 'undefined' }
   | { kind: 'ambiguous'; candidates: StepDefinition[] };
 
+export type DefinitionMatchResult =
+  | { kind: 'match'; definition: StepDefinition }
+  | { kind: 'undefined' }
+  | { kind: 'ambiguous'; candidates: StepDefinition[] };
+
 interface CompiledStep {
   def: StepDefinition;
   expression: CompiledStepPattern;
@@ -136,6 +141,23 @@ export class SupportRegistry {
    * definitions whose scope does NOT match are ignored. Two winners = ambiguous.
    */
   async match(text: string, scenarioTags: readonly string[]): Promise<MatchResult> {
+    const winners = this.matching(text, scenarioTags);
+    if (winners.length === 0) return { kind: 'undefined' };
+    if (winners.length > 1) return { kind: 'ambiguous', candidates: winners.map((w) => w.c.def) };
+    const { c, args } = winners[0]!;
+    const values = await args.values();
+    return { kind: 'match', definition: c.def, values };
+  }
+
+  /** Match without evaluating parameter transformers. Used by static validation and editor tooling. */
+  analyzeMatch(text: string, scenarioTags: readonly string[]): DefinitionMatchResult {
+    const winners = this.matching(text, scenarioTags);
+    if (winners.length === 0) return { kind: 'undefined' };
+    if (winners.length > 1) return { kind: 'ambiguous', candidates: winners.map((w) => w.c.def) };
+    return { kind: 'match', definition: winners[0]!.c.def };
+  }
+
+  private matching(text: string, scenarioTags: readonly string[]) {
     this.finalize();
     const hits: Array<{ c: CompiledStep; args: NonNullable<ReturnType<CompiledStepPattern['match']>> }> = [];
     for (const c of this.compiled!) {
@@ -143,13 +165,8 @@ export class SupportRegistry {
       const args = c.expression.match(text);
       if (args) hits.push({ c, args });
     }
-    if (hits.length === 0) return { kind: 'undefined' };
     const scoped = hits.filter((h) => h.c.scope);
-    const winners = scoped.length ? scoped : hits;
-    if (winners.length > 1) return { kind: 'ambiguous', candidates: winners.map((w) => w.c.def) };
-    const { c, args } = winners[0]!;
-    const values = await args.values();
-    return { kind: 'match', definition: c.def, values };
+    return scoped.length ? scoped : hits;
   }
 
   hooksFor(level: HookLevel, kind: HookKind): HookDefinition[] {

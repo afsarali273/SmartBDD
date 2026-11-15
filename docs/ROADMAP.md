@@ -30,7 +30,9 @@ file is self-contained.
 - [x] Class-based steps with decorators (`@Steps()` + `@Given`…) + DI container (`static inject`, per-scenario instances, `dispose()`)
 - [x] Cucumber JSON reporter (`cucumber-json` / `json`)
 - [x] `bddx snippets` command
-- [ ] Gate: a real project runs end to end, serially
+- [x] `bddx validate`: parse/plan/config errors, undefined/ambiguous steps, duplicate ids, unused steps, unmatched hooks, optional tag governance
+- [x] Gate: a real project runs end to end (`examples/playwright-showcase`: 119 Playwright UI/API scenarios across 11
+      feature files, mixing serial and parallel groups in one command)
 
 ## Phase 2: Data-driven specs (data core done)
 
@@ -94,13 +96,13 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 
 - [x] Step retry (done early: `@retry:N` on steps, `@stepRetry` per scenario, definition `retry`)
 - [x] Scenario retry (`@retry:N`, `@noRetry`, config `retry.scenario`, `--retry`), group retry (`groups.x.retry`, `retryMembers`, `scenarioRetry`), run (`--rerun-failed`)
-- [x] Policies: attempts, delay, `retry.on` (error name / message / regex), `setRetryAnalyzer` (TestNG-style)
+- [x] Policies: attempts, delay/backoff, `retry.on` (error name / message / regex), worker-crash retry, `setRetryAnalyzer` (TestNG-style)
 - [x] ~~`attempt` hook level~~ not needed: scenario hooks run per attempt; step hooks have `eachAttempt`
 - [x] Flaky status (pass after fail, incl. merged reruns), `--fail-on-flaky`, `@quarantine`
 - [x] Rerun-failed from an NDJSON file + `bddx report` merge
 - [x] Soft assertions (`ctx.soft.check/run`)
 - [x] Scenario time budget (`@timeout` on scenarios, `scenarioTimeout`)
-- [ ] Group time budget; exponential backoff for scenario retries (step retries already have it)
+- [x] Group/run time budgets; cancellation via `AbortSignal`; graceful Ctrl+C (exit 130)
 
 ## Phase 5: Reporting + DX
 
@@ -121,13 +123,15 @@ in TS/Java; the annotated document is the report. Design note: [design/code-link
 - [ ] Settle binding syntax and file selection (open questions in the design note)
 - [ ] Registry: index step definitions by symbol (class.method / function) in addition to pattern
 - [ ] `SpecParser` for Markdown with bindings
-- [ ] `bddx validate` + `bddx bind --fix` (rewrite line links to symbols)
+- [x] `bddx validate` (general project validation; delivered outside this parked design)
+- [ ] `bddx bind --fix` (rewrite line links to symbols)
 - [ ] Markdown report renderer with inline statuses
 
 ## Phase 6: Ecosystem
 
 - [ ] Plugin API (data loaders, reporters, parameter types, retry analyzers, plan modifiers)
-- [ ] Playwright integration (browser per worker via BeforeWorker, page per scenario, traces/screenshots as attachments, browser steps `concurrent: false`)
+- [ ] Reusable Playwright integration package (the real-project showcase already proves browser per worker, page per
+      scenario, screenshot attachments and `concurrent:false`; extraction plus automatic failure traces remain)
 - [ ] HTTP step library (Karate-style JSON matching)
 - [ ] Allure reporter
 - [ ] Step catalogue export (JSON) + MCP server for AI assistants

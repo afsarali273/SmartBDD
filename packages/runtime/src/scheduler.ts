@@ -14,10 +14,11 @@
  * In-process concurrency (async). Worker processes (true isolation) plug in later behind `runNode`.
  */
 import type { Plan, PlanNode, Status } from '@bddx/core';
+import { TimeoutError } from './signals.js';
 
 export interface SchedulerCallbacks {
   /** Run the node on worker `workerId` ('w1'…). Must resolve to the node's status (never reject). */
-  runNode(node: PlanNode, workerId: string): Promise<Status>;
+  runNode(node: PlanNode, workerId: string, signal?: AbortSignal): Promise<Status>;
   /** Mark the node skipped without running it. */
   skipNode(node: PlanNode, reason: string): Promise<void>;
   /** A reason to stop starting new nodes (fail-fast, fatal BeforeAll), or undefined. */
@@ -45,6 +46,23 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
   const retryGroups = new Set([...plan.groups.values()].filter((g) => g.retry > 0).map((g) => g.name));
   const settled = new Set<string>();
   const toCheck: string[] = [];
+  const groupBudgets = new Map<string, { controller: AbortController; timer: NodeJS.Timeout }>();
+
+  const startGroupBudgets = (n: PlanNode) => {
+    for (const name of n.groups) {
+      const ms = plan.groups.get(name)?.timeoutMs;
+      if (!ms || groupBudgets.has(name)) continue;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new TimeoutError(`Group "${name}"`, ms)), ms);
+      groupBudgets.set(name, { controller, timer });
+    }
+  };
+  const clearGroupBudget = (name: string) => {
+    const b = groupBudgets.get(name);
+    if (b) clearTimeout(b.timer);
+    groupBudgets.delete(name);
+  };
+  const timedOutGroup = (n: PlanNode) => n.groups.find((g) => groupBudgets.get(g)?.controller.signal.aborted);
 
   const targetSettled = (target: string, dependent: PlanNode) =>
     plan.byId.get(target)!.groups.every((g) => !retryGroups.has(g) || settled.has(g) || dependent.groups.includes(g));
@@ -68,8 +86,14 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
     for (const l of n.locks) heldLocks.set(l, (heldLocks.get(l) ?? 0) + 1);
     for (const g of n.groups) groupRunning.set(g, (groupRunning.get(g) ?? 0) + 1);
     if (n.exclusive) exclusiveRunning = true;
+    startGroupBudgets(n);
+    const signals = n.groups.flatMap((g) => {
+      const signal = groupBudgets.get(g)?.controller.signal;
+      return signal ? [signal] : [];
+    });
+    const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
     const p = cb
-      .runNode(n, slot)
+      .runNode(n, slot, signal)
       .catch((): Status => 'failed')
       .then((status) => {
         results.set(n.id, status);
@@ -97,11 +121,15 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
       const g = toCheck.shift()!;
       const rerun = cb.settleGroup ? await cb.settleGroup(g) : undefined;
       if (rerun?.length) {
+        clearGroupBudget(g);
         for (const id of rerun) {
           results.delete(id);
           pending.add(id);
         }
-      } else settled.add(g);
+      } else {
+        settled.add(g);
+        clearGroupBudget(g);
+      }
       changed = true;
     }
     return changed;
@@ -116,7 +144,18 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
       changed = false;
       if (await checkGroups()) changed = true;
       for (const n of plan.nodes) {
-        if (!pending.has(n.id) || !depsDone(n)) continue;
+        if (!pending.has(n.id)) continue;
+        const timedOut = timedOutGroup(n);
+        if (timedOut) {
+          pending.delete(n.id);
+          results.set(n.id, 'skipped');
+          const ms = plan.groups.get(timedOut)!.timeoutMs!;
+          await cb.skipNode(n, `group "${timedOut}" timed out after ${ms} ms`);
+          queueGroupChecks(n);
+          changed = true;
+          continue;
+        }
+        if (!depsDone(n)) continue;
         const stop = cb.stopReason();
         const failed = options.ignoreDependencyResults
           ? undefined
@@ -153,5 +192,6 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
     }
     await Promise.race(running.values());
   }
+  for (const name of [...groupBudgets.keys()]) clearGroupBudget(name);
   return results;
 }

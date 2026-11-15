@@ -168,8 +168,9 @@ Scenario: Long import
 ```
 
 ```ts
-retry: { scenario: 1, delay: '1s', on: ['TimeoutError', '/ECONNRESET/'] },
-groups: { setup: { retry: 1, retryMembers: 'all' } },   // re-run a whole group (hooks included)
+retry: { scenario: 1, delay: '1s', backoff: 2, workerCrash: 1, on: ['TimeoutError', '/ECONNRESET/'] },
+runTimeout: '30m',
+groups: { setup: { retry: 1, retryMembers: 'all', timeout: '2m' } },
 ```
 
 ```ts
@@ -201,15 +202,18 @@ export default defineConfig({
 bddx [run] [paths...]  -t "@smoke and not @wip"  -p ci  -D env=qa  -f ndjson:reports/e.ndjson  --dry-run
 bddx list  [paths...]  # ids + tags of selected scenarios
 bddx snippets         # code for every undefined step
+bddx validate [paths...] [--fail-on-warnings]  # static project checks; runs no tests
 bddx plan [--explain <id>] [--plan-format text|json|mermaid]   # execution graph, runs nothing
 bddx run -w 4 --no-deps   # 4 parallel workers; do not pull in dependencies
 bddx run -w 4 --pool process   # 4 worker processes
 bddx run -r 2 --fail-on-flaky  # retry failed scenarios twice; flaky passes fail the run
+bddx run --run-timeout 30m --worker-crash-retry 1
 bddx run --rerun-failed reports/bddx.ndjson
 bddx report run1.ndjson run2.ndjson -f html:reports/report.html
 ```
 
-Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.
+Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error,
+130 interrupted. Long-running user operations can observe `ctx.signal` for cooperative cancellation.
 
 ## Repository layout
 
@@ -223,6 +227,7 @@ Paths accept files, folders, globs and `file.feature:LINE`. Exit codes: 0 passed
 | `examples/basic` | Steps, hooks, outlines, class steps + DI, `@data`, step repeat/retry |
 | `examples/orchestration` | Groups, dependencies, locks, exports, logs with images (inline and `--pool process`) |
 | `examples/resilience` | Scenario/group retry, flaky, quarantine, soft assertions, time budget |
+| `examples/playwright-showcase` | Standalone real project: 119 Playwright UI/API scenarios across 11 feature files, run entirely by bddx |
 | `docs` | Implementation notes, progress log, decisions, roadmap |
 
 ## Documentation

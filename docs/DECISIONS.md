@@ -169,3 +169,40 @@ was discussed and parked by the owner (bddx is an automation framework with BDD-
 - **Scope hooks run per process, closed by the parent's global ref count**: keeps "AfterGroup before dependents" and lets
   hooks create process-local resources. Lifecycle events are emitted once by the parent so reports don't duplicate.
 - **Inline stays the default**: zero overhead, shared memory, simplest debugging; `process` is opt-in.
+
+## ADR-022 Static validation and cancellation use existing runtime contracts (2026-11-15)
+
+**Static validation.** `bddx validate` reuses config loading, spec parsing and the pure planner, then loads support code
+and performs definition-only matching. `SupportRegistry.analyzeMatch` deliberately does not evaluate parameter
+transformers: validation must not execute user test logic. Undefined/ambiguous steps, parse/plan/config errors and
+duplicate ids are errors; unused definitions, unmatched hooks and governed unknown tags are warnings. Warnings fail
+only with `--fail-on-warnings`. Tag governance is opt-in (`validation.allowedTagKeys`) because arbitrary business tags
+are otherwise a valid part of Gherkin.
+
+**Cancellation.** One `AbortSignal` contract covers programmatic cancellation, Ctrl+C, run budgets and group budgets,
+and is exposed as `ctx.signal` so user libraries can cooperate. Inline work races hooks/steps/delays against that signal;
+process work cancels by terminating the affected lane and respawning it when needed. After-hooks and deferred cleanups
+are not pre-aborted, so teardown still gets a chance to run. Ctrl+C returns the conventional exit code 130 after
+reporters are flushed where possible.
+
+**Budgets and retries.** A group timeout starts with the first member of each group attempt and is reset for a group
+retry. It aborts running members and skips queued members. Scenario retry delay supports exponential backoff; worker
+crash retry is separate from ordinary scenario retry and only handles `WorkerCrashedError`, never deterministic worker
+initialisation failures.
+
+## ADR-023 Live Playwright showcase is a standalone, optional consumer project (2026-11-15)
+
+**Decision.** Prove the real-project gate with `examples/playwright-showcase`, using bddx as the sole runner and
+Playwright only for Chromium and HTTP transport. The Internet is the UI target because it exposes stable, purpose-built
+automation controls; JSONPlaceholder is the API target because it needs no key and simulates writes without mutating
+shared state. The project launches one browser/API context per process worker and one isolated page context per UI
+scenario. All browser definitions declare `concurrent:false`.
+
+**Why standalone and optional.** This is deliberately a normal consumer with its own `package.json`, lockfile and
+scripts, not a hidden root dev dependency. It proves the public package surface and gives users a copyable project.
+Its live 66-scenario run is not added to root `npm run verify`: public network availability and the Chromium download
+would make the otherwise deterministic framework CI unreliable and slow.
+
+**Consequence.** The showcase proves lifecycle and reporting patterns, but does not pretend to be the final Phase 6
+integration package. Reusable fixtures, automatic screenshots/traces only on failure, browser selection and shared
+configuration remain extraction work.

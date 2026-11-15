@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
 import { discoverSpecs, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
+import { formatValidation, validateProject } from './validate.js';
 import type { Reporter } from '@bddx/reporters';
 
 const HELP = `bddx ${BDDX_VERSION}
@@ -12,6 +13,7 @@ Usage:
   bddx [run] [paths...] [options]    Run scenarios (paths may be files, folders, globs, file:line)
   bddx list  [paths...] [options]    List selected scenarios with ids and tags, without running
   bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
+  bddx validate [paths...] [options] Static checks: specs, plan, steps, hooks and unused definitions
   bddx report <events.ndjson...>     Build reports from event files; several files are merged (later runs win)
              -f html:reports/report.html -f junit:reports/junit.xml
   bddx plan  [paths...] [options]    Show the execution plan: groups, dependencies, locks (runs nothing)
@@ -28,14 +30,17 @@ Options:
       --fail-fast         Stop after the first failed scenario
       --no-strict         Pending/undefined steps do not fail the run
       --timeout <ms>      Default step/hook timeout
+      --run-timeout <dur> Time budget for the complete run, e.g. 30m
   -w, --workers <n>       Max scenarios running at once (default 1)
       --pool <kind>       inline (default: one process) | process (one Node process per worker)
   -s, --set <path=value>  Override any config value (repeatable), e.g. --set groups.checkout.mode=serial
       --log-level <level> Console logs: debug | info (default) | warn | error | silent
       --no-deps           Do not pull in dependencies of selected scenarios
   -r, --retry <n>         Retry failed scenarios up to n times (config retry.scenario; @retry:N per scenario)
+      --worker-crash-retry <n> Retry on a fresh process after a worker crash
       --fail-on-flaky     Fail the run when a scenario passed only after a retry
       --rerun-failed <f>  Run only scenarios that did not pass in events file <f> (+ their dependencies)
+      --fail-on-warnings   With validate, return exit 1 when warnings are found
   -h, --help              Show help
   -v, --version           Show version
 
@@ -61,12 +66,15 @@ export async function main(argv: string[]): Promise<number> {
         'dry-run': { type: 'boolean' },
         'fail-fast': { type: 'boolean' },
         timeout: { type: 'string' },
+        'run-timeout': { type: 'string' },
         workers: { type: 'string', short: 'w' },
         pool: { type: 'string' },
         set: { type: 'string', short: 's', multiple: true },
         retry: { type: 'string', short: 'r' },
+        'worker-crash-retry': { type: 'string' },
         'fail-on-flaky': { type: 'boolean' },
         'rerun-failed': { type: 'string' },
+        'fail-on-warnings': { type: 'boolean' },
         'log-level': { type: 'string' },
         'plan-format': { type: 'string' },
         explain: { type: 'string' },
@@ -90,7 +98,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (['run', 'list', 'snippets', 'plan', 'report'].includes(positionals[0] ?? '')) {
+  if (['run', 'list', 'snippets', 'validate', 'plan', 'report'].includes(positionals[0] ?? '')) {
     command = positionals[0]!;
     paths = positionals.slice(1);
   }
@@ -108,6 +116,10 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'report') return await reportFromEvents(paths, values.format ?? []);
     const retry = values.retry !== undefined ? Number(values.retry) : undefined;
     if (retry !== undefined && (!Number.isInteger(retry) || retry < 0)) throw new UsageError(`--retry expects a whole number >= 0, got "${values.retry}"`);
+    const workerCrashRetry = values['worker-crash-retry'] !== undefined ? Number(values['worker-crash-retry']) : undefined;
+    if (workerCrashRetry !== undefined && (!Number.isInteger(workerCrashRetry) || workerCrashRetry < 0)) {
+      throw new UsageError(`--worker-crash-retry expects a whole number >= 0, got "${values['worker-crash-retry']}"`);
+    }
     const workers = values.workers !== undefined ? Number(values.workers) : undefined;
     const logLevel = values['log-level'];
     if (logLevel !== undefined && !['debug', 'info', 'warn', 'error', 'silent'].includes(logLevel)) {
@@ -120,6 +132,19 @@ export async function main(argv: string[]): Promise<number> {
     const pool = values.pool;
     if (pool !== undefined && pool !== 'inline' && pool !== 'process') throw new UsageError(`--pool must be inline or process (got "${pool}")`);
     if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) throw new UsageError(`--workers expects a positive integer, got "${values.workers}"`);
+    if (command === 'validate') {
+      const result = await validateProject({
+        ...common,
+        ...(values.config ? { config: values.config } : {}),
+        ...(values.profile ? { profile: values.profile } : {}),
+        ...(paths.length ? { paths } : {}),
+        ...(values.tags ? { tags: values.tags } : {}),
+        ...(values.name ? { name: values.name } : {}),
+        ...(workers ? { workers } : {}),
+      });
+      process.stdout.write(formatValidation(result));
+      return result.errors || (values['fail-on-warnings'] && result.warnings) ? 1 : 0;
+    }
     if (command === 'plan') {
       const { plan } = await prepareRun({
         ...common,
@@ -155,10 +180,12 @@ export async function main(argv: string[]): Promise<number> {
       ...(values['fail-fast'] ? { failFast: true } : {}),
       ...(noStrict ? { strict: false } : {}),
       ...(values.timeout ? { stepTimeoutMs: Number(values.timeout) } : {}),
+      ...(values['run-timeout'] ? { sets: [...(common.sets ?? []), `runTimeout=${values['run-timeout']}`] } : {}),
       ...(workers ? { workers } : {}),
       ...(pool ? { pool: pool as 'inline' | 'process' } : {}),
       ...(noDeps ? { withDeps: false } : {}),
       ...(retry !== undefined ? { retry } : {}),
+      ...(workerCrashRetry !== undefined ? { workerCrashRetry } : {}),
       ...(values['fail-on-flaky'] ? { failOnFlaky: true } : {}),
       ...(values['rerun-failed'] ? { rerunFailed: values['rerun-failed'] } : {}),
     });

@@ -1,6 +1,6 @@
 # bddx: status overview (done so far and what remains)
 
-_Last updated: 2026-11-15 (after session 5: worker processes)._
+_Last updated: 2026-11-15 (after session 8: mixed serial/parallel Playwright expansion)._
 
 This is the one-page answer to "what does bddx do today, and what is left?". It is a summary: details live in
 [IMPLEMENTATION.md](IMPLEMENTATION.md) (how), [DECISIONS.md](DECISIONS.md) (why), [ROADMAP.md](ROADMAP.md) (task
@@ -18,17 +18,19 @@ replaceable adapters. TypeScript first, Java later (same config, events and conf
 | Phase | Scope | State |
 | --- | --- | --- |
 | 0 Foundations | Monorepo, spec model, Gherkin parsing, stable ids, tags, event schema, conformance skeleton | ✅ Done (CCK parse gate deferred) |
-| 1 Core runner | Steps, hooks, context, reporters, CLI, config, class steps + DI | ✅ Done (real-project gate pending) |
+| 1 Core runner | Steps, hooks, context, reporters, CLI, config, class steps + DI | ✅ Done (real-project gate passed) |
 | 2 Data-driven specs | CSV/TSV/JSON/YAML/XLSX via `@data:` | 🟡 Data core done; composite steps + gate left |
 | 3 Orchestration | Groups, dependencies, locks, priorities, parallel/serial, worker processes, logging, step repeat/retry | ✅ Done; `@requires`, worker events and timeline view left |
-| 4 Resilience | Scenario/group/run retry, flaky, quarantine, rerun + merge, soft asserts, time budgets | ✅ Done; group time budget and retry backoff left |
+| 4 Resilience | Scenario/group/run retry, flaky, quarantine, rerun + merge, soft asserts, cancellation and time budgets | ✅ Done |
 | 5 Reporting + DX | HTML v1 done; HTML v2, history, debug mode, IDE support | 🟡 HTML v1 only |
-| 6 Ecosystem | Plugin API, Playwright, HTTP steps, Allure, AI step catalogue/MCP, v1.0 | ⬜ Not started |
+| 6 Ecosystem | Plugin API, Playwright, HTTP steps, Allure, AI step catalogue/MCP, v1.0 | 🟡 Playwright showcase done; reusable integration pending |
 | 7 Java port | JUnit Platform engine, same config/events/conformance | ⬜ Not started |
 | Parked | Code-linked Markdown specs; callable scenarios | ⏸ Owner decision: later |
 
-**Health:** `npm run verify` is green: 148 tests (unit, conformance, CLI end to end), plus the example projects (basic,
-orchestration inline and with worker processes, resilience).
+**Health:** `npm run verify` is green: 157 tests (unit, conformance, CLI end to end), plus the offline example projects.
+The optional live `examples/playwright-showcase` project is independently green: 119 scenarios / 504 steps across 11
+feature files against The Internet, SauceDemo, TodoMVC, JSONPlaceholder and DummyJSON (not part of root verify because
+it requires network access and a Chromium download).
 
 ---
 
@@ -105,12 +107,15 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 ### 2.9 Resilience
 - **Scenario retry**: `@retry:N`, `@noRetry`, config `retry {scenario, delay, on, failOnFlaky}`, `--retry`, and
   `setRetryAnalyzer()` (like TestNG's IRetryAnalyzer).
+- Retry delays support `backoff`; process crashes can retry on a fresh worker with `retry.workerCrash` or
+  `--worker-crash-retry`.
 - **Group retry**: `groups.x.retry`, `retryMembers: all|failed` and `scenarioRetry`. Dependents wait until the group settles.
 - **Flaky detection**: a pass after a failure is reported, and fails the run only with `--fail-on-flaky`. **`@quarantine`** runs and
   reports a scenario but never fails the build.
 - **Run retry**: `--rerun-failed <events.ndjson>`; `bddx report a.ndjson b.ndjson` merges runs into any report format.
 - **Soft assertions**: `ctx.soft.check()` / `ctx.soft.run()`.
-- **Time budgets**: `@timeout:<dur>` on a scenario or config `scenarioTimeout`. Step timeouts are separate.
+- **Time budgets**: step/hook timeouts, `@timeout:<dur>` / `scenarioTimeout`, `groups.x.timeout`, and `runTimeout` /
+  `--run-timeout`. Programmatic cancellation and Ctrl+C share `ctx.signal`; Ctrl+C exits 130 after cleanup/report flush.
 
 ### 2.10 Logging and reporting
 - Levelled logs (`debug`, `info`, `warn`, `error`) via `ctx.log` or the global `log` (from page objects and API clients, attributed
@@ -123,16 +128,22 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
   - **Cucumber JSON**
   - **NDJSON** event stream (versioned schema; the source of truth for every other report)
 
-### 2.11 Configuration and CLI
+### 2.11 Validation, configuration and CLI
+- `bddx validate` checks every configured spec without executing tests or parameter transformers: parse/config/plan
+  errors, duplicate ids, undefined/ambiguous steps, unused definitions and unmatched hooks. Optional
+  `validation.allowedTagKeys` enables tag governance; `--fail-on-warnings` makes warnings fail CI.
 - `bddx.config.{ts,mts,js,mjs,json}` via `defineConfig`, `profiles`, and `--set path=value` overrides for any option.
-- Commands: `run` (default), `list`, `snippets`, `plan`, `report`. Exit codes: 0 passed, 1 failed, 2 usage/config/parse error.
+- Commands: `run` (default), `list`, `snippets`, `validate`, `plan`, `report`. Exit codes: 0 passed, 1 failed,
+  2 usage/config/parse error, 130 interrupted.
 
 ### 2.12 Architecture and quality
 - Packages: `core` (model, parsing, plan, events), `runtime` (registry, executor, scheduler, pool), `reporters`, `cli`.
 - Ports and adapters: `SpecParser`, `TagExpressionEngine`, `StepExpressionEngine`. Cucumber libraries are imported only in `adapters/`.
 - Language-neutral **conformance suite** (9 features with expected JSON) that the Java port must also pass.
-- Three runnable examples: `examples/basic`, `examples/orchestration`, `examples/resilience`.
-- 21 ADRs recording the design decisions.
+- Four runnable examples: `examples/basic`, `examples/orchestration`, `examples/resilience`, plus the standalone
+  `examples/playwright-showcase` real project (119 UI/API scenarios across 11 feature files, powered by Playwright but
+  run by bddx).
+- 23 ADRs recording the design decisions.
 
 ---
 
@@ -156,12 +167,13 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 ### 3.2 Config options
 `features`, `steps`, `tags`, `name`, `reporters`, `params`, `stepTimeoutMs`, `failFast`, `strict`, `language`, `dataDir`,
 `workers`, `pool`, `groups` (mode, workers, dependsOn, onDependencyFailure, priority, locks, match, retry, retryMembers,
-scenarioRetry), `defaultMode`, `logLevel`, `retry` (scenario, delay, on, failOnFlaky), `scenarioTimeout`, `profiles`.
+scenarioRetry, timeout), `defaultMode`, `logLevel`, `retry` (scenario, delay, backoff, workerCrash, on, failOnFlaky),
+`scenarioTimeout`, `runTimeout`, `validation`, `profiles`.
 
 ### 3.3 CLI flags
 `-c/--config`, `-p/--profile`, `-t/--tags`, `--name`, `-f/--format`, `-D/--define`, `--dry-run`, `--fail-fast`,
 `--no-strict`, `--timeout`, `-w/--workers`, `--pool`, `-s/--set`, `--log-level`, `--no-deps`, `-r/--retry`,
-`--fail-on-flaky`, `--rerun-failed`, `--plan-format`, `--explain`.
+`--worker-crash-retry`, `--run-timeout`, `--fail-on-flaky`, `--rerun-failed`, `--fail-on-warnings`, `--plan-format`, `--explain`.
 
 ---
 
@@ -180,7 +192,7 @@ scenarioRetry), `defaultMode`, `logLevel`, `retry` (scenario, delay, on, failOnF
    - VS Code extension and language server: step completion, go to definition.
 2. **Phase 6: ecosystem**
    - Plugin API: data loaders, reporters, parameter types, retry analyzers, plan modifiers.
-   - **Playwright integration**:
+   - **Reusable Playwright integration** (extract and generalise the patterns proven in `examples/playwright-showcase`):
      - a browser per worker (BeforeWorker) and a page per scenario
      - screenshots and traces on failure
      - browser steps marked `concurrent: false`
@@ -200,12 +212,9 @@ scenarioRetry), `defaultMode`, `logLevel`, `retry` (scenario, delay, on, failOnF
 - **Phase 3:**
   - `@requires:<file.feature>` spec-level preconditions
   - `workerStarted` and `waitedForMs` events
-- **Phase 4:**
-  - group time budget
-  - exponential backoff for scenario retries (step retries already have it)
 - **Phase 0/1 gates:**
   - parse the Cucumber Compatibility Kit features
-  - run a real project end to end
+  - ~~run a real project end to end~~ done by `examples/playwright-showcase`
 - **Gauge-style Markdown specs:** today `.md` means Markdown-with-Gherkin. This overlaps with the parked code-linked
   Markdown work.
 
@@ -215,6 +224,8 @@ scenarioRetry), `defaultMode`, `logLevel`, `retry` (scenario, delay, on, failOnF
   - `ctx.feature`/`ctx.groups` stores and module-level variables are per process
   - share state across processes with `ctx.export`/`ctx.from` or an external system
 - A worker crash in the middle of a scenario loses that worker's After* hooks.
+- JavaScript promises cannot be forcibly stopped in the inline pool; framework waits stop promptly, and user code
+  should pass `ctx.signal` to cancellable APIs. Process-pool cancellation terminates the lane.
 - `bddx list` does not load support code, so it cannot flag undefined steps; use `--dry-run` for that.
 - Run-level hook failures are summarised in the console's "Hook failures" section, not per scenario.
 

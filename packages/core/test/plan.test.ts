@@ -72,13 +72,22 @@ describe('buildPlan', () => {
     const s = parseSpec(src, 'g.feature').scenarios;
     const plan = buildPlan(s, s, {
       groups: {
-        smoke: { match: '@smoke', mode: 'serial' },
+        smoke: { match: '@smoke', mode: 'serial', timeout: '2s' },
         api: { match: '@api', dependsOn: ['smoke'], onDependencyFailure: 'run', locks: ['env'] },
       },
     });
     expect(plan.errors).toEqual([]);
     expect(plan.byId.get('g.feature::b')!).toMatchObject({ groups: ['api'], locks: ['env'] });
     expect(plan.byId.get('g.feature::b')!.deps).toEqual([{ target: 'g.feature::a', soft: true, via: 'group-config:api->smoke' }]);
+    expect(plan.groups.get('smoke')!.timeoutMs).toBe(2000);
+    expect(renderPlanText(plan)).toContain('timeout 2000ms');
+  });
+
+  it('validates group time budgets', () => {
+    const s = all();
+    expect(buildPlan(s, s, { groups: { setup: { timeout: 'soon' } } }).errors.map((e) => e.message)).toEqual([
+      'groups.setup.timeout: "soon" is not a duration (use e.g. 500ms, 2s, 1m)',
+    ]);
   });
 
   it('reports unknown targets, unknown groups, bad priority, bad workers and cycles', () => {

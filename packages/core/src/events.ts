@@ -70,6 +70,7 @@ export interface PlannedGroup {
   workers?: number;
   dependsOn: string[];
   members: string[];
+  timeoutMs?: number;
 }
 
 /** Emitted once, after selection, before anything executes. */

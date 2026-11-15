@@ -2,7 +2,7 @@ export * from './api.js';
 export * from './types.js';
 export { DataTable, DocString } from './datatable.js';
 export { Store, Scope, type Cleanup, type ScopeLevel } from './context.js';
-export { PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
+export { PendingSignal, SkipSignal, TimeoutError, CancellationError, abortError, abortableSleep, withTimeout } from './signals.js';
 export {
   SupportRegistry,
   getGlobalRegistry,
@@ -10,6 +10,7 @@ export {
   callerLocation,
   type StepDefinition,
   type MatchResult,
+  type DefinitionMatchResult,
 } from './registry.js';
 export * from './ports.js';
 export { createCucumberExpressionEngine } from './adapters/cucumber-expressions.js';

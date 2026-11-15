@@ -1,0 +1,32 @@
+{
+  "name": "bddx-playwright-showcase",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A real-world UI and API automation project powered by bddx and Playwright",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "validate": "bddx validate --fail-on-warnings",
+    "plan": "bddx plan",
+    "test": "bddx run",
+    "test:ui": "bddx run --tags @ui",
+    "test:api": "bddx run --tags @api",
+    "test:smoke": "bddx run --tags @smoke",
+    "test:inline": "bddx run --pool inline",
+    "verify": "npm run build && npm run validate && npm test"
+  },
+  "dependencies": {
+    "@bddx/cli": "file:../../packages/cli",
+    "@bddx/core": "file:../../packages/core",
+    "@bddx/reporters": "file:../../packages/reporters",
+    "@bddx/runtime": "file:../../packages/runtime",
+    "playwright": "^1.65.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

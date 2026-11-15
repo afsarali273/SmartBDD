@@ -75,7 +75,7 @@ class FakePool implements RemotePool {
   }
 }
 
-async function runPooled(r: SupportRegistry, src: string, plan: PlanOptions = {}, crashOn: string[] = []) {
+async function runPooled(r: SupportRegistry, src: string, plan: PlanOptions = {}, crashOn: string[] = [], execute: Partial<ConstructorParameters<typeof Executor>[0]> = {}) {
   const spec = parseSpec(src, 'x.feature');
   expect(spec.errors).toEqual([]);
   const p = buildPlan(spec.scenarios, spec.scenarios, plan);
@@ -83,7 +83,7 @@ async function runPooled(r: SupportRegistry, src: string, plan: PlanOptions = {}
   const bus = new EventBus({ keepHistory: true });
   const pool = new FakePool(r, p, bus);
   for (const c of crashOn) pool.crashOn.add(c);
-  const result = await new Executor({ registry: r, bus, plan: p, pool }).execute(spec.scenarios);
+  const result = await new Executor({ registry: r, bus, plan: p, pool, ...execute }).execute(spec.scenarios);
   const of = <T extends BddxEvent['type']>(t: T) => bus.history!.filter((e): e is Extract<BddxEvent, { type: T }> => e.type === t);
   return { result, of, pool, status: (id: string) => result.scenarioStatuses.get(id) };
 }
@@ -188,6 +188,24 @@ describe('coordinator + worker mode (fake pool)', () => {
     expect(status('b')).toBe('passed');
     expect(of('scenarioFinished').find((e) => e.scenarioId === 'a')?.error?.message).toContain('exited unexpectedly');
     expect(result.success).toBe(false);
+  });
+
+  it('can retry a scenario on a fresh lane after a worker crash', async () => {
+    const r = new SupportRegistry();
+    r.defineStep('ok', () => {});
+    const { result, status, of } = await runPooled(
+      r,
+      `Feature: F\n  @id:a\n  Scenario: a\n    Given ok\n`,
+      { workers: 1 },
+      ['a'],
+      { retry: { workerCrash: 1 } },
+    );
+    expect(status('a')).toBe('passed');
+    expect(of('scenarioFinished').map((e) => [e.attempt, e.status, !!e.willRetry, !!e.flaky])).toEqual([
+      [1, 'failed', true, false],
+      [2, 'passed', false, true],
+    ]);
+    expect(result.success).toBe(true);
   });
 
   it('BeforeWorker failure skips that lane’s scenarios and fails the run', async () => {

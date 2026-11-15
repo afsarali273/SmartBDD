@@ -41,6 +41,8 @@ export interface GroupConfig {
   retryMembers?: 'all' | 'failed';
   /** Default scenario retry for members (each member retried on its own, before any group retry). */
   scenarioRetry?: number;
+  /** Time budget for one complete group attempt, e.g. '2m'. */
+  timeout?: string | number;
 }
 
 export interface PlanOptions {
@@ -100,6 +102,8 @@ export interface PlanGroup {
   /** Group retry (extra runs of the group). 0 = none. */
   retry: number;
   retryMembers: 'all' | 'failed';
+  /** Time budget for one group attempt in milliseconds. */
+  timeoutMs?: number;
 }
 
 export interface PlanError {

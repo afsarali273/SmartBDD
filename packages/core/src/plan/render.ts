@@ -8,7 +8,7 @@ export function renderPlanText(plan: Plan): string {
       `  group ${g.name}${g.implicit ? ' (ungrouped scenarios)' : ''}: ${g.mode}${g.workers ? ` x${g.workers}` : ''}, ${g.members.length} member(s)` +
         `${g.dependsOn.length ? `, after ${g.dependsOn.join(', ')}${g.onDependencyFailure === 'run' ? ' (soft)' : ''}` : ''}` +
         `${g.locks.length ? `, locks ${g.locks.join(', ')}` : ''}${g.priority ? `, priority ${g.priority}` : ''}` +
-        `${g.retry ? `, retry ${g.retry} (${g.retryMembers})` : ''}`,
+        `${g.retry ? `, retry ${g.retry} (${g.retryMembers})` : ''}${g.timeoutMs ? `, timeout ${g.timeoutMs}ms` : ''}`,
     );
   }
   out.push('');

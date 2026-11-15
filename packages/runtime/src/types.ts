@@ -41,6 +41,8 @@ export interface RunContext {
   run: Store;
   /** User data from config `params` and CLI `-D key=value`. */
   params: Readonly<Record<string, string>>;
+  /** Aborted when the run, group or current scenario is cancelled. Pass to cancellable user APIs. */
+  signal: AbortSignal;
   /** Levelled logger: ctx.log(msg) = info; ctx.log.debug/info/warn/error(msg, data?). */
   log: Logger;
   attach(body: string | Uint8Array, mediaType?: string, name?: string): void;

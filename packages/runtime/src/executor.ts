@@ -24,6 +24,7 @@
  *  - ctx.pending()        -> step 'pending', remaining steps skipped, scenario 'pending'.
  *  - ctx.skip(reason)     -> step 'skipped', remaining skipped, scenario 'skipped' with reason.
  *  - undefined / ambiguous step -> that status, remaining steps skipped.
+ *  - cancellation / run or group timeout -> in-flight cancellable work fails; queued work is skipped; After hooks run.
  */
 import {
   BDDX_VERSION,
@@ -54,7 +55,7 @@ import type { SupportRegistry } from './registry.js';
 import { schedule } from './scheduler.js';
 import { WorkerCrashedError, WorkerInitError, type CloseResult, type NodeRequest, type NodeResult, type RemotePool, type ScopeRef, type WorkerExecutor } from './pool.js';
 import { createLogger, setFallbackLogger, withLogger } from './logger.js';
-import { PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
+import { abortError, abortableSleep, PendingSignal, SkipSignal, TimeoutError, withTimeout } from './signals.js';
 import type {
   CurrentStepInfo,
   FeatureContext,
@@ -80,6 +81,8 @@ export interface ExecuteOptions {
   strict?: boolean;
   params?: Record<string, string>;
   runId?: string;
+  /** Cancels pending work and interrupts cancellable hooks/steps. Exposed to user code as `ctx.signal`. */
+  signal?: AbortSignal;
   /** Scenario retry defaults (tags @retry:N / group scenarioRetry override `scenario`). */
   retry?: RetryOptions;
   /** Default time budget per scenario attempt (ms); `@timeout:<dur>` on a scenario overrides. 0/undefined = none. */
@@ -98,6 +101,10 @@ export interface RetryOptions {
   scenario?: number;
   /** Pause before a retry (ms). */
   delayMs?: number;
+  /** Multiply the delay after each failed attempt. 1 = fixed delay. Default 1. */
+  backoff?: number;
+  /** Extra attempts when a process worker crashes while running a scenario. Default 0. */
+  workerCrash?: number;
   /** Only retry when the error name or message matches one of these (strings match name exactly or message substring). */
   on?: Array<string | RegExp>;
   /** A scenario that passed only after a retry fails the run. Default false. */
@@ -156,9 +163,11 @@ export class Executor implements WorkerExecutor {
   private readonly touchedBy = new Map<string, Set<string>>();
   /** Worker mode: BeforeWorker failed, so every node assigned here is skipped with this reason. */
   private workerFatal: string | undefined;
+  private readonly signal: AbortSignal;
 
   constructor(private readonly opts: ExecuteOptions) {
     this.params = Object.freeze({ ...(opts.params ?? {}) });
+    this.signal = opts.signal ?? new AbortController().signal;
   }
 
   async execute(scenarios: readonly ScenarioInstance[]): Promise<ExecuteResult> {
@@ -195,6 +204,7 @@ export class Executor implements WorkerExecutor {
         name: g.name,
         mode: g.mode,
         ...(g.workers !== undefined ? { workers: g.workers } : {}),
+        ...(g.timeoutMs !== undefined ? { timeoutMs: g.timeoutMs } : {}),
         dependsOn: g.dependsOn,
         members: g.members,
       })),
@@ -238,13 +248,13 @@ export class Executor implements WorkerExecutor {
     await schedule(
       plan,
       {
-        runNode: (node, workerId) => (this.opts.pool ? this.runRemote(node, workerId) : this.runNode(node, workerId)),
+        runNode: (node, workerId, signal) => (this.opts.pool ? this.runRemote(node, workerId, signal) : this.runNode(node, workerId, signal)),
         skipNode: async (node, reason) => {
           this.debug(`skip ${node.id}: ${reason}`, { scenarioId: node.id });
           this.skipScenario(node.scenario, reason, 'scheduler');
           await this.release(node);
         },
-        stopReason: () => this.stopReason,
+        stopReason: () => this.stopReason ?? this.cancellationReason(),
         settleGroup: (group) => this.settleGroup(group),
       },
       { ignoreDependencyResults: !!this.opts.dryRun },
@@ -311,23 +321,37 @@ export class Executor implements WorkerExecutor {
     this.opts.bus.emit({ type: 'log', level: 'debug', source: 'bddx', message, ...(ids.scenarioId ? { scenarioId: ids.scenarioId } : {}) });
   }
 
-  private async runNode(node: PlanNode, workerId: string): Promise<Status> {
+  private cancellationReason(): string | undefined {
+    if (!this.signal.aborted) return undefined;
+    const error = abortError(this.signal);
+    this.runFailed = true;
+    this.runError ??= error;
+    return `cancelled: ${error.message}`;
+  }
+
+  private combineSignal(signal?: AbortSignal): AbortSignal {
+    if (!signal || signal === this.signal) return this.signal;
+    return AbortSignal.any([this.signal, signal]);
+  }
+
+  private async runNode(node: PlanNode, workerId: string, nodeSignal?: AbortSignal): Promise<Status> {
     const s = node.scenario;
+    const signal = this.combineSignal(nodeSignal);
     const waited = node.deps.length ? ` after ${node.deps.map((d) => `${d.target}${d.soft ? '~' : ''}`).join(', ')}` : '';
     this.debug(`start ${node.id} on ${workerId}${waited}${node.locks.length ? ` holding ${node.locks.join(', ')}` : ''}`, { scenarioId: node.id });
     try {
       const groupStores: Record<string, Store> = {};
       for (const g of this.realGroups(node)) {
-        const og = this.openGroup(g);
+        const og = this.openGroup(g, signal);
         const fatal = await og.opened;
         if (fatal) return this.skipScenario(s, fatal, workerId);
         groupStores[g] = og.scope.store;
       }
-      const of = this.openFeature(s);
+      const of = this.openFeature(s, signal);
       const ffatal = await of.opened;
       if (ffatal) return this.skipScenario(s, ffatal, workerId);
       if (s.rule) {
-        const rfatal = await this.openRule(s, of.scope).opened;
+        const rfatal = await this.openRule(s, of.scope, signal).opened;
         if (rfatal) return this.skipScenario(s, rfatal, workerId);
       }
       let attempt = this.attemptsUsed.get(node.id) ?? 0;
@@ -335,10 +359,23 @@ export class Executor implements WorkerExecutor {
       for (;;) {
         attempt++;
         this.attemptsUsed.set(node.id, attempt);
-        const r = await this.runScenario(s, this.runScope, of.scope, attempt, workerId, groupStores, node);
+        const r = await this.runScenario(s, this.runScope, of.scope, attempt, workerId, groupStores, node, signal);
         status = r.status;
         if (!r.willRetry) break;
-        if (this.opts.retry?.delayMs) await sleep(this.opts.retry.delayMs);
+        if (this.opts.retry?.delayMs) {
+          const backoff = this.opts.retry.backoff ?? 1;
+          try {
+            await abortableSleep(this.opts.retry.delayMs * Math.pow(backoff, Math.max(0, attempt - 1)), signal);
+          } catch (e) {
+            attempt++;
+            this.attemptsUsed.set(node.id, attempt);
+            this.lastStepStatuses.set(node.id, []);
+            this.opts.bus.emit({ type: 'scenarioStarted', scenarioId: s.id, attempt, workerId });
+            this.finishScenario(s, attempt, 'failed', 0, e, undefined, { quarantined: !!node.quarantined });
+            status = 'failed';
+            break;
+          }
+        }
       }
       if (status === 'failed' && this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
       return status;
@@ -364,7 +401,7 @@ export class Executor implements WorkerExecutor {
 
   // ---------------------------------------------------------------- lazily opened scopes
 
-  private openFeature(s: ScenarioInstance): OpenScope {
+  private openFeature(s: ScenarioInstance, signal: AbortSignal = this.signal): OpenScope {
     let f = this.features.get(s.uri);
     if (f) return f;
     const scope = new Scope('feature');
@@ -373,7 +410,7 @@ export class Executor implements WorkerExecutor {
     entry.opened = (async () => {
       if (!this.opts.remoteWorker) this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
       if (this.opts.dryRun) return undefined;
-      const ctx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {});
+      const ctx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {}, signal);
       const before = await this.runHooks('feature', 'before', ctx, tagFilter(s.feature.tags.map((t) => t.name)), { uri: s.uri });
       if (before.status === 'failed') {
         entry.hookFailed = true;
@@ -409,7 +446,7 @@ export class Executor implements WorkerExecutor {
     });
   }
 
-  private openRule(s: ScenarioInstance, featureScope: Scope): OpenScope {
+  private openRule(s: ScenarioInstance, featureScope: Scope, signal: AbortSignal = this.signal): OpenScope {
     const key = ruleKey(s);
     let r = this.rules.get(key);
     if (r) return r;
@@ -417,7 +454,7 @@ export class Executor implements WorkerExecutor {
     this.rules.set(key, entry);
     entry.opened = (async () => {
       if (this.opts.dryRun) return undefined;
-      const ctx = this.makeFeatureContext(this.runScope, featureScope, s.feature, s.rule, {});
+      const ctx = this.makeFeatureContext(this.runScope, featureScope, s.feature, s.rule, {}, signal);
       const before = await this.runHooks('rule', 'before', ctx, tagFilter(ruleTags(s.rule!)), { uri: s.uri });
       if (before.status === 'failed') {
         entry.hookFailed = true;
@@ -439,7 +476,7 @@ export class Executor implements WorkerExecutor {
     if (after.status === 'failed') this.runFailed = true;
   }
 
-  private openGroup(name: string): OpenScope {
+  private openGroup(name: string, signal: AbortSignal = this.signal): OpenScope {
     let g = this.groups.get(name);
     if (g) return g;
     const scope = new Scope('group');
@@ -448,7 +485,7 @@ export class Executor implements WorkerExecutor {
     entry.opened = (async () => {
       if (!this.opts.remoteWorker) this.opts.bus.emit({ type: 'groupStarted', group: name, ...this.groupAttempt(name) });
       if (this.opts.dryRun) return undefined;
-      const ctx = this.makeGroupContext(scope, name);
+      const ctx = this.makeGroupContext(scope, name, signal);
       const before = await this.runHooks('group', 'before', ctx, groupFilter(name), {});
       if (before.status === 'failed') {
         entry.hookFailed = true;
@@ -515,9 +552,12 @@ export class Executor implements WorkerExecutor {
     set.add(workerId);
   }
 
-  private async runRemote(node: PlanNode, workerId: string): Promise<Status> {
+  private async runRemote(node: PlanNode, workerId: string, nodeSignal?: AbortSignal): Promise<Status> {
     const pool = this.opts.pool!;
     const s = node.scenario;
+    const signal = this.combineSignal(nodeSignal);
+    const cancel = () => pool.cancel?.(workerId);
+    signal.addEventListener('abort', cancel, { once: true });
     const marker = (): OpenScope => ({ scope: this.runScope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) });
     try {
       for (const g of this.realGroups(node)) {
@@ -539,30 +579,45 @@ export class Executor implements WorkerExecutor {
         if (a) groupAttempts[g] = a;
       }
       let res: NodeResult;
-      try {
-        res = await pool.run({
-          nodeId: node.id,
-          workerId,
-          attemptBase: this.attemptsUsed.get(node.id) ?? 0,
-          failedBefore: this.failedBefore.has(node.id),
-          groupAttempts,
-        });
-      } catch (e) {
-        if (e instanceof WorkerInitError) {
-          this.stopReason ??= 'a worker process failed to start';
-          this.runFailed = true;
-          this.runError ??= e;
+      let crashRetries = 0;
+      for (;;) {
+        try {
+          res = await pool.run({
+            nodeId: node.id,
+            workerId,
+            attemptBase: this.attemptsUsed.get(node.id) ?? 0,
+            failedBefore: this.failedBefore.has(node.id),
+            groupAttempts,
+          });
+          break;
+        } catch (e) {
+          if (e instanceof WorkerInitError) {
+            this.stopReason ??= 'a worker process failed to start';
+            this.runFailed = true;
+            this.runError ??= e;
+          }
+          const attempt = (this.attemptsUsed.get(node.id) ?? 0) + 1;
+          this.attemptsUsed.set(node.id, attempt);
+          this.failedBefore.add(node.id);
+          this.lastStepStatuses.set(node.id, []);
+          const err = signal.aborted
+            ? abortError(signal)
+            : e instanceof WorkerCrashedError || e instanceof WorkerInitError
+              ? e
+              : new WorkerCrashedError(toErrorInfo(e).message);
+          const retryCrash = e instanceof WorkerCrashedError && !signal.aborted && crashRetries < (this.opts.retry?.workerCrash ?? 0);
+          this.finishScenario(s, attempt, 'failed', 0, err, undefined, { willRetry: retryCrash, quarantined: !!node.quarantined });
+          if (retryCrash) {
+            crashRetries++;
+            this.debug(`worker crash while running ${node.id}; retrying on a fresh ${workerId} process (${crashRetries}/${this.opts.retry!.workerCrash})`, {
+              scenarioId: node.id,
+            });
+            continue;
+          }
+          pool.publish(node.id, 'failed', undefined);
+          if (this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
+          return 'failed';
         }
-        // crashed (or failed to start): the scenario fails; the lane gets a fresh process next time
-        const attempt = (this.attemptsUsed.get(node.id) ?? 0) + 1;
-        this.attemptsUsed.set(node.id, attempt);
-        this.failedBefore.add(node.id);
-        this.lastStepStatuses.set(node.id, []);
-        const err = e instanceof WorkerCrashedError || e instanceof WorkerInitError ? e : new WorkerCrashedError(toErrorInfo(e).message);
-        this.finishScenario(s, attempt, 'failed', 0, err, undefined, { quarantined: !!node.quarantined });
-        pool.publish(node.id, 'failed', undefined);
-        if (this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
-        return 'failed';
       }
       this.attemptsUsed.set(node.id, res.attempts);
       this.lastStepStatuses.set(node.id, res.stepStatuses);
@@ -577,6 +632,7 @@ export class Executor implements WorkerExecutor {
       if (res.status === 'failed' && this.opts.failFast && !node.quarantined) this.stopReason ??= 'fail-fast: an earlier scenario failed';
       return res.status;
     } finally {
+      signal.removeEventListener('abort', cancel);
       await this.release(node);
     }
   }
@@ -724,6 +780,7 @@ export class Executor implements WorkerExecutor {
     workerId = 'w1',
     groupStores: Record<string, Store> = {},
     node?: PlanNode,
+    signal: AbortSignal = this.signal,
   ): Promise<{ status: Status; willRetry: boolean }> {
     const { bus } = this.opts;
     const started = Date.now();
@@ -735,7 +792,7 @@ export class Executor implements WorkerExecutor {
     const ids: Emitters = { scenarioId: scenario.id };
     bus.emit({ type: 'scenarioStarted', scenarioId: scenario.id, attempt, workerId });
 
-    const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids, groupStores);
+    const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids, groupStores, signal);
     const statuses: Status[] = [];
     let error: unknown;
     let skipReason: string | undefined;
@@ -754,6 +811,11 @@ export class Executor implements WorkerExecutor {
 
     const stepStatuses: Status[] = [];
     for (const step of scenario.steps) {
+      if (signal.aborted && !blocked && !dry) {
+        blocked = true;
+        statuses.push('failed');
+        error ??= abortError(signal);
+      }
       if (deadline && !blocked && !dry && Date.now() >= deadline) {
         blocked = true;
         statuses.push('failed');
@@ -976,6 +1038,7 @@ export class Executor implements WorkerExecutor {
             scenarioCapped ? `Scenario "${scenario.name}" (time budget ${scenarioTimeoutMs} ms) at step "${text}"` : `Step "${text}"${mode ? ` (${mode} ${n}/${total})` : ''}`,
             t,
             () => withLogger(actx.log, () => m.definition.fn(actx, ...args)),
+            actx.signal,
           );
           if (ret === 'pending') st = 'pending';
           const soft = actx.soft.failures;
@@ -1021,10 +1084,15 @@ export class Executor implements WorkerExecutor {
           `{ concurrent: false } (e.g. it drives a browser). Remove @concurrency to repeat it sequentially.`,
       );
     } else if (mode === 'repeat') {
-      const r = await runRepeat(repeat, run.concurrency ?? 1, baseDelay, attemptOnce);
-      status = r.status;
-      error = r.error;
-      skipReason = r.skipReason;
+      try {
+        const r = await runRepeat(repeat, run.concurrency ?? 1, baseDelay, attemptOnce, ctx.signal);
+        status = r.status;
+        error = r.error;
+        skipReason = r.skipReason;
+      } catch (e) {
+        status = 'failed';
+        error = e;
+      }
     } else {
       // single run or retry-until-pass
       let delay = baseDelay;
@@ -1034,7 +1102,15 @@ export class Executor implements WorkerExecutor {
         error = r.error;
         skipReason = r.skipReason;
         if (status !== 'failed' || n === total) break; // only failures are retried
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) {
+          try {
+            await abortableSleep(delay, ctx.signal);
+          } catch (e) {
+            status = 'failed';
+            error = e;
+            break;
+          }
+        }
         delay = Math.round(delay * backoff);
       }
     }
@@ -1151,8 +1227,11 @@ export class Executor implements WorkerExecutor {
       let error: unknown;
       let skipReason: string | undefined;
       try {
-        await withTimeout(`Hook "${hook.name}"`, hook.timeoutMs ?? registry.defaultTimeoutMs, () =>
-          withLogger(ctx.log, () => (hook.fn as (c: RunContext) => unknown)(ctx)),
+        await withTimeout(
+          `Hook "${hook.name}"`,
+          hook.timeoutMs ?? registry.defaultTimeoutMs,
+          () => withLogger(ctx.log, () => (hook.fn as (c: RunContext) => unknown)(ctx)),
+          kind === 'before' ? ctx.signal : undefined,
         );
       } catch (e) {
         ({ status, skipReason } = classify(e));
@@ -1193,11 +1272,12 @@ export class Executor implements WorkerExecutor {
     return this.idsByCtx.get(ctx) ?? {};
   }
 
-  private makeRunContext(scope: Scope, ids: Emitters): RunContext {
+  private makeRunContext(scope: Scope, ids: Emitters, signal: AbortSignal = this.signal): RunContext {
     const bus = this.opts.bus;
     const ctx: RunContext = {
       run: scope.store,
       params: this.params,
+      signal,
       log: createLogger((level, message, data, attachment) => {
         const cur = this.currentIds(ctx);
         bus.emit({
@@ -1230,8 +1310,15 @@ export class Executor implements WorkerExecutor {
     return ctx;
   }
 
-  private makeFeatureContext(runScope: Scope, featureScope: Scope, feature: FeatureInfo, rule: RuleRef | undefined, ids: Emitters): FeatureContext {
-    const base = this.makeRunContext(runScope, ids);
+  private makeFeatureContext(
+    runScope: Scope,
+    featureScope: Scope,
+    feature: FeatureInfo,
+    rule: RuleRef | undefined,
+    ids: Emitters,
+    signal: AbortSignal = this.signal,
+  ): FeatureContext {
+    const base = this.makeRunContext(runScope, ids, signal);
     const ctx: FeatureContext = Object.assign(base, {
       feature: featureScope.store,
       featureInfo: feature,
@@ -1242,8 +1329,8 @@ export class Executor implements WorkerExecutor {
     return ctx;
   }
 
-  private makeGroupContext(scope: Scope, name: string): GroupContext {
-    const base = this.makeRunContext(this.runScope, {});
+  private makeGroupContext(scope: Scope, name: string, signal: AbortSignal = this.signal): GroupContext {
+    const base = this.makeRunContext(this.runScope, {}, signal);
     const ctx: GroupContext = Object.assign(base, {
       group: scope.store,
       groupName: name,
@@ -1260,8 +1347,9 @@ export class Executor implements WorkerExecutor {
     attempt: number,
     ids: Emitters,
     groupStores: Record<string, Store> = {},
+    signal: AbortSignal = this.signal,
   ): StepContext {
-    const base = this.makeFeatureContext(runScope, featureScope, s.feature, s.rule, ids);
+    const base = this.makeFeatureContext(runScope, featureScope, s.feature, s.rule, ids, signal);
     const ctx: StepContext = Object.assign(base, {
       scenario: {
         id: s.id,
@@ -1337,8 +1425,6 @@ function ruleTags(rule: RuleRef): string[] {
   return rule.tags.map((t) => t.name);
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 function createSoftAssert(): SoftAssert {
   const failures: Error[] = [];
   const record = (e: unknown): void => {
@@ -1393,21 +1479,27 @@ async function runRepeat(
   concurrency: number,
   delayMs: number,
   attempt: (i: number) => Promise<{ status: Status; error?: unknown; skipReason?: string }>,
+  signal?: AbortSignal,
 ): Promise<{ status: Status; error?: unknown; skipReason?: string }> {
   let next = 1;
   let first: { status: Status; error?: unknown; skipReason?: string } | undefined;
   const inflight = new Set<Promise<void>>();
-  while (next <= n && !first) {
-    while (inflight.size < concurrency && next <= n && !first) {
-      const i = next++;
-      const p: Promise<void> = attempt(i).then((r) => {
-        if (r.status !== 'passed' && !first) first = r;
-        inflight.delete(p);
-      });
-      inflight.add(p);
-      if (delayMs > 0 && next <= n) await sleep(delayMs);
+  try {
+    while (next <= n && !first) {
+      while (inflight.size < concurrency && next <= n && !first) {
+        const i = next++;
+        const p: Promise<void> = attempt(i).then((r) => {
+          if (r.status !== 'passed' && !first) first = r;
+          inflight.delete(p);
+        });
+        inflight.add(p);
+        if (delayMs > 0 && next <= n) await abortableSleep(delayMs, signal);
+      }
+      if (inflight.size) await Promise.race(inflight);
     }
-    if (inflight.size) await Promise.race(inflight);
+  } catch (e) {
+    await Promise.all(inflight);
+    throw e;
   }
   await Promise.all(inflight);
   return first ?? { status: 'passed' };

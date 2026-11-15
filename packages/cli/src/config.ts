@@ -62,17 +62,24 @@ export interface BddxOptions {
    * `on` entries match the error name exactly or the message as a substring; "/regex/" strings are regular expressions.
    * Per scenario: @retry:N / @noRetry. Per group: groups.x.scenarioRetry, groups.x.retry (whole group).
    */
-  retry?: { scenario?: number; delay?: string | number; on?: string[]; failOnFlaky?: boolean };
+  retry?: { scenario?: number; delay?: string | number; backoff?: number; workerCrash?: number; on?: string[]; failOnFlaky?: boolean };
   /** Time budget per scenario attempt, e.g. '2m'. Per scenario: @timeout:<duration>. */
   scenarioTimeout?: string | number;
+  /** Time budget for the complete run, including hooks and retries, e.g. '30m'. */
+  runTimeout?: string | number;
   /** Console log level: 'debug' | 'info' (default) | 'warn' | 'error' | 'silent'. Events always contain every log; file reports have their own `logLevel` option. */
   logLevel?: LogLevel | 'silent';
+  /** Optional governance for `bddx validate`. Built-in orchestration/data tags are always allowed. */
+  validation?: {
+    /** Custom tag keys allowed by the project, without `@` (for example `smoke`, `owner`). */
+    allowedTagKeys?: string[];
+  };
 }
 
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'pool',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation',
 ] as const;
 
 /**

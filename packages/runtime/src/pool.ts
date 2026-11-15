@@ -67,6 +67,8 @@ export interface RemotePool {
   close(workerIds: readonly string[], scopes: readonly ScopeRef[]): Promise<CloseResult>;
   /** AfterWorker hooks + exit in every live worker. */
   stop(): Promise<{ runFailed: boolean }>;
+  /** Cancel work on one lane (group/run timeout or external cancellation). */
+  cancel?(workerId: string): void;
 }
 
 /** The stack would point into bddx internals; the message carries the cause. */
@@ -253,6 +255,11 @@ export class ProcessPool implements RemotePool {
   /** Kill every worker (used when the parent is interrupted). */
   kill(): void {
     for (const lane of this.lanes.values()) if (!lane.dead) lane.child.kill();
+  }
+
+  cancel(workerId: string): void {
+    const lane = this.lanes.get(workerId);
+    if (lane && !lane.dead) lane.child.kill();
   }
 }
 

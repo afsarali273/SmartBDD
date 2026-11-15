@@ -22,7 +22,7 @@ import {
   type RunSummary,
   type ScenarioInstance,
 } from '@bddx/core';
-import { Executor, ProcessPool, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
+import { CancellationError, Executor, ProcessPool, TimeoutError, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
 import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
 import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
 
@@ -53,11 +53,15 @@ export interface RunRequest {
   logLevel?: LogLevel;
   /** Extra attempts for failed scenarios (overrides config retry.scenario). */
   retry?: number;
+  /** Extra attempts on a fresh process after a worker crash. */
+  workerCrashRetry?: number;
   failOnFlaky?: boolean;
   /** NDJSON events of an earlier run: run only scenarios that did not pass there (plus their dependencies). */
   rerunFailed?: string;
   /** 'inline' (default) or 'process' (overrides config `pool`). */
   pool?: 'inline' | 'process';
+  /** Programmatic cancellation. CLI Ctrl+C uses the same path. */
+  signal?: AbortSignal;
   /** Internal: no CLI diagnostics (worker processes repeat the parent's preparation). */
   quiet?: boolean;
 }
@@ -65,8 +69,9 @@ export interface RunRequest {
 export interface RunOutcome {
   success: boolean;
   summary?: RunSummary;
-  /** 0 = passed, 1 = scenarios failed, 2 = usage/config/parse error. */
-  exitCode: 0 | 1 | 2;
+  /** 0 = passed, 1 = validation/scenarios failed, 2 = usage/config/parse error, 130 = SIGINT. */
+  exitCode: 0 | 1 | 2 | 130;
+  interrupted?: boolean;
   scenarios: ScenarioInstance[];
 }
 
@@ -131,9 +136,10 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
   let opts: BddxOptions = req.sets?.length ? applySetOverrides(loaded.options, req.sets) : loaded.options;
   const cliOverrides: BddxOptions = {};
   if (req.logLevel) cliOverrides.logLevel = req.logLevel;
-  if (req.retry !== undefined || req.failOnFlaky !== undefined) {
+  if (req.retry !== undefined || req.workerCrashRetry !== undefined || req.failOnFlaky !== undefined) {
     cliOverrides.retry = {
       ...(req.retry !== undefined ? { scenario: req.retry } : {}),
+      ...(req.workerCrashRetry !== undefined ? { workerCrash: req.workerCrashRetry } : {}),
       ...(req.failOnFlaky !== undefined ? { failOnFlaky: req.failOnFlaky } : {}),
     };
   }
@@ -233,11 +239,19 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
         onEvent: (e) => bus.emit(e),
       })
     : undefined;
+  const controller = new AbortController();
+  let interrupted = false;
+  const forwardAbort = () => controller.abort(req.signal?.reason ?? new CancellationError());
+  if (req.signal?.aborted) forwardAbort();
+  else req.signal?.addEventListener('abort', forwardAbort, { once: true });
+  const runTimeoutMs = opts.runTimeout !== undefined ? toMs(opts.runTimeout, 'runTimeout') : 0;
+  const runTimer = runTimeoutMs > 0 ? setTimeout(() => controller.abort(new TimeoutError('Run', runTimeoutMs)), runTimeoutMs) : undefined;
   const onSignal = () => {
+    interrupted = true;
+    controller.abort(new CancellationError('Interrupted by SIGINT'));
     pool?.kill();
-    process.exit(130);
   };
-  if (pool) process.once('SIGINT', onSignal);
+  process.once('SIGINT', onSignal);
   let result;
   try {
     result = await new Executor({
@@ -246,25 +260,32 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
       bus,
       specs,
       plan,
+      signal: controller.signal,
       ...(pool ? { pool } : {}),
     }).execute(plan.nodes.map((n) => n.scenario));
   } finally {
-    if (pool) {
-      process.off('SIGINT', onSignal);
-      pool.kill();
-    }
+    process.off('SIGINT', onSignal);
+    req.signal?.removeEventListener('abort', forwardAbort);
+    if (runTimer) clearTimeout(runTimer);
+    pool?.kill();
   }
 
   const listenerErrors = await bus.flush();
   for (const r of reporters) await r.close?.();
   for (const e of listenerErrors) process.stderr.write(`Reporter error: ${e instanceof Error ? e.stack : String(e)}\n`);
 
-  const exitCode: 0 | 1 | 2 = hasParseErrors ? 2 : result.success ? 0 : 1;
-  return { success: result.success && !hasParseErrors, summary: result.summary, exitCode, scenarios: plan.nodes.map((n) => n.scenario) };
+  const exitCode: 0 | 1 | 2 | 130 = interrupted ? 130 : hasParseErrors ? 2 : result.success ? 0 : 1;
+  return {
+    success: result.success && !hasParseErrors && !interrupted,
+    summary: result.summary,
+    exitCode,
+    scenarios: plan.nodes.map((n) => n.scenario),
+    ...(interrupted ? { interrupted: true } : {}),
+  };
 }
 
 /** Support code: steps, hooks, parameter types. They register on the global registry. */
-async function loadSupportCode(rootDir: string, opts: BddxOptions, quiet = false) {
+export async function loadSupportCode(rootDir: string, opts: BddxOptions, quiet = false) {
   const registry = getGlobalRegistry();
   const supportFiles = await discoverSupportFiles(rootDir, asArray(opts.steps ?? DEFAULTS.steps));
   for (const f of supportFiles) await import(pathToFileURL(f).href);
@@ -288,7 +309,7 @@ function executorOptions(opts: BddxOptions, req: RunRequest): Omit<ExecuteOption
 
 /** What a worker process needs to rebuild the same run (structured-cloneable; no reporters). */
 function workerInit(req: RunRequest): RunRequest {
-  const { reporters: _r, formats: _f, dryRun: _d, ...rest } = req;
+  const { reporters: _r, formats: _f, dryRun: _d, signal: _s, ...rest } = req;
   return { ...rest, cwd: resolve(req.cwd ?? process.cwd()), quiet: true };
 }
 
@@ -361,6 +382,14 @@ function toRetryOptions(r: NonNullable<BddxOptions['retry']>): RetryOptions {
     out.scenario = r.scenario;
   }
   if (r.delay !== undefined) out.delayMs = toMs(r.delay, 'retry.delay');
+  if (r.backoff !== undefined) {
+    if (!Number.isFinite(r.backoff) || r.backoff < 1) throw new UsageError(`retry.backoff must be a number >= 1`);
+    out.backoff = r.backoff;
+  }
+  if (r.workerCrash !== undefined) {
+    if (!Number.isInteger(r.workerCrash) || r.workerCrash < 0) throw new UsageError(`retry.workerCrash must be a whole number >= 0`);
+    out.workerCrash = r.workerCrash;
+  }
   if (r.on) out.on = r.on.map((x) => (/^\/.+\/[a-z]*$/.test(x) ? new RegExp(x.slice(1, x.lastIndexOf('/')), x.slice(x.lastIndexOf('/') + 1)) : x));
   if (r.failOnFlaky !== undefined) out.failOnFlaky = r.failOnFlaky;
   return out;

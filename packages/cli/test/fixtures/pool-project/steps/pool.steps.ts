@@ -32,4 +32,5 @@ Given('I record my process id', async (ctx) => {
 });
 Given('the worker crashes if crash=yes', (ctx) => {
   if (ctx.params['crash'] === 'yes') process.exit(3);
+  if (ctx.params['hang'] === 'yes') return new Promise((resolve) => setTimeout(resolve, 2000));
 });
