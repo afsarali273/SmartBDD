@@ -1,8 +1,10 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
+import { watchLoop } from './watch.js';
 import { discoverSpecs, historyReport, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
 import { formatValidation, validateProject } from './validate.js';
 import type { Reporter } from '@bddx/reporters';
@@ -41,6 +43,7 @@ Options:
       --worker-crash-retry <n> Retry on a fresh process after a worker crash
       --fail-on-flaky     Fail the run when a scenario passed only after a retry
       --rerun-failed <f>  Run only scenarios that did not pass in events file <f> (+ their dependencies)
+      --watch             Run, then re-run on file changes (each run in a fresh process). Keys: Enter all, f failed, q quit
       --debug             Interactive debugger: pause after a failing step (c/n/r/e/s/q at the prompt).
                           Runs one scenario at a time in this process, no retries or time budgets
       --debug-step        Like --debug, but pause before every step
@@ -72,6 +75,7 @@ export async function main(argv: string[]): Promise<number> {
         define: { type: 'string', short: 'D', multiple: true },
         'dry-run': { type: 'boolean' },
         debug: { type: 'boolean' },
+        watch: { type: 'boolean' },
         shard: { type: 'string' },
         'debug-step': { type: 'boolean' },
         inspect: { type: 'string' },
@@ -191,6 +195,27 @@ export async function main(argv: string[]): Promise<number> {
         else throw new UsageError(`--plan-format must be text, json or mermaid (got "${fmt}")`);
       }
       return plan.errors.length ? 2 : 0;
+    }
+
+    if (values.watch) {
+      if (command !== 'run') throw new UsageError('--watch works with the run command');
+      if (values.debug || values['debug-step'] || values.inspect !== undefined) throw new UsageError('--watch cannot be combined with --debug');
+      if (values['dry-run']) throw new UsageError('--watch cannot be combined with --dry-run');
+      const { rootDir } = await loadConfig(values.config, process.cwd(), values.profile);
+      const rest = [...argv].filter((a) => a !== '--watch');
+      const idx = rest.indexOf('run');
+      if (idx >= 0 && idx <= rest.length - 1 && positionals[0] === 'run') rest.splice(idx, 1);
+      for (const p of paths) {
+        const i = rest.indexOf(p);
+        if (i >= 0) rest.splice(i, 1);
+      }
+      return await watchLoop({
+        rootDir,
+        baseArgs: rest,
+        userPaths: paths,
+        entry: fileURLToPath(new URL('./bin.js', import.meta.url)),
+        cwd: process.cwd(),
+      });
     }
 
     const outcome = await runBddx({
