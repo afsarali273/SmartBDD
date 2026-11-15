@@ -445,7 +445,7 @@ describe('html report: data-driven scenarios and step arguments', () => {
     expect(html).toContain('Examples: expensive');
     expect(html).toContain('<code class="ph">&lt;qty&gt;</code>'); // title / template placeholders
     expect(html).toContain('Scenario template');
-    expect(html).toContain('<span class="dc" title="item: pear">pear</span>');
+    expect(html).toContain('<span class="dc" data-label="item" title="item: pear">pear</span>');
     expect(html).toContain('class="dc-err">no pear x4</span>'); // failing row shows its error inline
     expect(html).toMatch(/<span class="pill st-failed">1 failed<\/span>/);
   });
@@ -475,5 +475,40 @@ describe('html report: data-driven scenarios and step arguments', () => {
     await bus.flush();
     const plan = events.find((e) => e.type === 'planReady')!;
     expect(plan.scenarios![0]!.steps[0]!.arg!.kind).toBe('dataTable');
+  });
+});
+
+describe('html report: responsive layout and UX hooks', () => {
+  it('ships viewport meta, a sticky tab bar, phone breakpoints, labelled data cells, empty state and back-to-top', async () => {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html7-'));
+    const file = join(dir, 'r.html');
+    await runWith(htmlReporter({ outputFile: file }));
+    const html = readFileSync(file, 'utf8');
+    expect(html).toContain('<meta name="viewport" content="width=device-width,initial-scale=1">');
+    expect(html).toContain('<nav class="tabbar">');
+    expect(html).toContain('@media (max-width:720px)');
+    expect(html).toContain('@media (max-width:520px)');
+    expect(html).toContain('id="nomatch"');
+    expect(html).toContain('id="totop"');
+    expect(html).toContain('id="shown"');
+    expect(html).not.toMatch(/<script[^>]+src=/);
+  });
+
+  it('data cells carry data-label for the stacked phone layout', async () => {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html8-'));
+    const file = join(dir, 'r.html');
+    const r = new SupportRegistry();
+    r.defineStep('I add {int}', () => {});
+    const rep = htmlReporter({ outputFile: file });
+    const bus = new EventBus();
+    bus.on((e) => rep.onEvent(e));
+    await new Executor({ registry: r, bus }).execute(
+      parseSpec('Feature: F\n  Scenario Outline: add <qty>\n    Given I add <qty>\n    Examples:\n      | qty |\n      | 3   |\n', 'f.feature').scenarios,
+    );
+    await bus.flush();
+    await rep.close?.();
+    expect(readFileSync(file, 'utf8')).toContain('<span class="dc" data-label="qty" title="qty: 3">3</span>');
   });
 });

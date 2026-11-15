@@ -19,6 +19,7 @@ import type {
 import { HistoryRecorder, scenarioHistory, type HistoryRun } from '@bddx/core';
 import { renderGraph, renderHistory, renderTimeline, trendDots, VIEW_CSS, type Interval, type Startup } from './html-views.js';
 import { buildDatasets, DATA_CSS, renderArg, renderDatasetClose, renderDatasetOpen } from './html-data.js';
+import { RESPONSIVE_CSS } from './html-responsive.js';
 import { computeStats, dataJson, renderOverview, STATS_CSS, summaryText } from './html-stats.js';
 import { attemptsNote, LogIndex, type ReportLogLevel } from './logs.js';
 import type { Reporter, ReporterOptions } from './types.js';
@@ -330,7 +331,7 @@ export function renderHtml(d: ReportData): string {
                 : '';
           const dataSummary = ds
             ? `<summary><span class="ico">${ICON[status]}</span><span class="dc dc-row">${esc(String(sc.example!.sourceRow ?? sc.example!.index))}</span>${ds.columns
-                .map((c) => `<span class="dc" title="${esc(`${c}: ${sc.example!.values[c] ?? ''}`)}">${esc(sc.example!.values[c] ?? '')}</span>`)
+                .map((c) => `<span class="dc" data-label="${esc(c)}" title="${esc(`${c}: ${sc.example!.values[c] ?? ''}`)}">${esc(sc.example!.values[c] ?? '')}</span>`)
                 .join('')}<span class="dc dc-flags">${flags}${histHtml}</span><span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span><button class="perma" type="button" data-link="${anchor(sc.id)}" title="Copy link to this scenario" aria-label="Copy link to this scenario">🔗</button>${rowNote}</summary>`
             : '';
           const text = esc(`${sc.name} ${sc.id} ${sc.uri} ${sc.tags.join(' ')} ${(sc.groups ?? []).join(' ')} ${Object.values(sc.example?.values ?? {}).join(' ')} ${sc.example?.source ?? ''}`.toLowerCase());
@@ -447,7 +448,7 @@ ${ds ? dataSummary : `<summary><span class="ico">${ICON[status]}</span><span cla
   const tab = (id: string, label: string, extra = '') => `<a href="#${id}" data-tab="${id}"${id === 'overview' ? ' class="on"' : ''}>${label}${extra}</a>`;
 
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
 <title>${esc(d.title)}</title>
 <style>
 :root{${LIGHT};color-scheme:light dark}
@@ -504,32 +505,35 @@ body:not(.show-bddx) .src-bddx,body:not(.show-bddx) .only-fw{display:none}detail
 @media print{header.top{position:static}.tabs,.actions,.toolbar,.perma,pre .cp{display:none}.panel{display:block!important;margin-bottom:24px}body{background:#fff}.card,.kpi{box-shadow:none;break-inside:avoid}}
 ${STATS_CSS}
 ${DATA_CSS}
+${RESPONSIVE_CSS}
 ${VIEW_CSS}</style></head>
 <body class="min-info">
 <header class="top"><div class="wrap">
 <div class="titlebar"><h1>${esc(d.title)}<span class="badge ${d.success ? 'ok' : 'ko'}">${d.success ? 'PASSED' : 'FAILED'}</span>${d.dryRun ? '<span class="badge ko">DRY RUN</span>' : ''}</h1>
 <div class="actions"><button id="share" title="Copy a short text summary for Slack, a PR or a ticket">Copy summary</button><button id="copylink" title="Copy a link to this view (tab, search and filters)">Copy link</button><button id="json" title="Download results and statistics as JSON">Download JSON</button><button id="print" title="Print or save as PDF">Print / PDF</button><button id="theme" title="Switch theme">Theme: auto</button></div></div>
 <div class="sub">${esc(when)} · ${ms(s?.durationMs)} · ${s?.scenarios.total ?? 0} scenarios, ${s?.steps.total ?? 0} steps · workers ${d.workers}${d.runId ? ` · run ${esc(d.runId.slice(0, 8))}` : ''}</div>
-<nav class="tabs">${tab('overview', 'Overview', failing ? `<span class="count bad">${failing}</span>` : '')}${tab('results', 'Results', `<span class="count">${stats.total}</span>`)}${tab('execution', 'Execution')}${historyPanel ? tab('history', 'History') : ''}</nav>
+
 </div></header>
+<nav class="tabbar"><div class="wrap"><div class="tabs">${tab('overview', 'Overview', failing ? `<span class="count bad">${failing}</span>` : '')}${tab('results', 'Results', `<span class="count">${stats.total}</span>`)}${tab('execution', 'Execution')}${historyPanel ? tab('history', 'History') : ''}</div><div class="tb-status"><span class="badge ${d.success ? 'ok' : 'ko'}">${d.success ? 'PASSED' : 'FAILED'}</span><span class="tb-rate">${stats.passRate === null ? '—' : `${(stats.passRate * 100).toFixed(stats.passRate === 0 || stats.passRate === 1 ? 0 : 1)}%`} · ${ms(s?.durationMs)}</span></div></div></nav>
 <main>
 <div class="panel on" id="tab-overview">${overview}</div>
 <div class="panel" id="tab-results">
 <div class="toolbar">
-<div class="tb-row">${totals}<span class="presets"><button type="button" data-preset="all">All</button><button type="button" data-preset="failures">Failures only</button></span></div>
-<div class="tb-row"><input type="search" id="q" placeholder="Search name, tag, id, group…  ( / )">
+<div class="tb-row">${totals}<span class="tb-count" id="shown"></span><span class="presets"><button type="button" data-preset="all">All</button><button type="button" data-preset="failures">Failures only</button></span></div>
+<div class="tb-row"><input type="search" id="q" placeholder="Search name, tag, id, group, data…" title="Shortcuts: / search · n / p next / previous failure · 1-4 switch tab">
 <label class="sub">logs <select id="lvl"><option value="debug">debug</option><option value="info" selected>info</option><option value="warn">warn</option><option value="error">error</option><option value="none">none</option></select></label>
 <label class="sub"><input type="checkbox" id="bddx"> framework logs</label>
 <button id="expand">Expand all</button><button id="collapse">Collapse all</button></div>
-<div class="sub">Shortcuts: <b>/</b> search · <b>n</b>/<b>p</b> next / previous failure · <b>1</b>–<b>4</b> switch tab</div>
 </div>
 ${features}
+<div id="nomatch">No scenarios match the current filters. <a href="#results?">Reset filters</a></div>
 ${runSection}
 </div>
 <div class="panel" id="tab-execution">${groups}${views || '<div class="empty">No timeline data for this run.</div>'}</div>
 ${historyPanel ? `<div class="panel" id="tab-history">${historyPanel}</div>` : ''}
 </main>
 <div id="toast" role="status"></div>
+<button id="totop" type="button" aria-label="Back to top" title="Back to top">↑</button>
 <script type="application/json" id="bddx-data">${dataJson(payload)}</script>
 <script>
 (function(){
@@ -546,7 +550,7 @@ ${historyPanel ? `<div class="panel" id="tab-history">${historyPanel}</div>` : '
   }
   function showTab(name){
     if(TABS.indexOf(name)<0||!document.getElementById('tab-'+name))name='overview';
-    TABS.forEach(function(t){var p=document.getElementById('tab-'+t);if(p)p.classList.toggle('on',t===name);var l=document.querySelector('[data-tab="'+t+'"]');if(l)l.classList.toggle('on',t===name)});
+    TABS.forEach(function(t){var p=document.getElementById('tab-'+t);if(p)p.classList.toggle('on',t===name);var l=document.querySelector('[data-tab="'+t+'"]');if(l){l.classList.toggle('on',t===name);if(t===name)l.setAttribute('aria-current','page');else l.removeAttribute('aria-current')}});
     current=name;return name;
   }
   function hiddenStatuses(){var off=[];$$('[data-filter]').forEach(function(c){if(!c.checked)off.push(c.getAttribute('data-filter'))});return off}
@@ -563,6 +567,10 @@ ${historyPanel ? `<div class="panel" id="tab-history">${historyPanel}</div>` : '
       var hide=off[d.getAttribute('data-status')]||(text&&d.getAttribute('data-text').indexOf(text)<0);
       d.classList.toggle('hidden',!!hide);
     });
+    var vis=0,all=0;$$('details.scenario').forEach(function(d){all++;if(!d.classList.contains('hidden'))vis++});
+    $$('section.dataset,section.feature:not(.run)').forEach(function(sec){sec.classList.toggle('hidden',!sec.querySelector('details.scenario:not(.hidden)'))});
+    var sh=document.getElementById('shown');if(sh)sh.textContent=vis===all?all+' scenarios':vis+' of '+all+' shown';
+    var nm=document.getElementById('nomatch');if(nm)nm.classList.toggle('show',all>0&&vis===0);
     if(skipHash!==true)syncHash();
   }
   function flash(t){t.open=true;t.classList.remove('hidden');t.scrollIntoView({block:'start'});t.classList.add('flash');setTimeout(function(){t.classList.remove('flash')},1400)}
@@ -631,6 +639,10 @@ ${historyPanel ? `<div class="panel" id="tab-history">${historyPanel}</div>` : '
     else if(e.key==='n'||e.key==='p'){jump(e.key==='n'?1:-1)}
     else if(e.key>='1'&&e.key<='4'){var t=TABS[Number(e.key)-1];if(document.getElementById('tab-'+t)){history.pushState(null,'','#'+t);route()}}
   });
+  var totop=document.getElementById('totop');
+  window.addEventListener('scroll',function(){totop.classList.toggle('show',window.scrollY>700)},{passive:true});
+  totop.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})});
+  apply(true);
   route(false);
 })();
 </script>
