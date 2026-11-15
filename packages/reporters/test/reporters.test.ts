@@ -377,3 +377,18 @@ describe('html reporter v3: statistics, tabs and sharing', () => {
     expect(html).toContain('vs previous run');
   });
 });
+
+describe('dependency graph: standalone scenarios', () => {
+  it('counts scenarios without dependencies instead of drawing them', async () => {
+    const { renderGraph } = await import('../src/html-views.js');
+    const sc = (id: string, dependsOn?: Array<{ id: string; soft: boolean }>) => ({
+      id, name: id, uri: 'f.feature', line: 1, featureName: 'F', tags: [], steps: [], ...(dependsOn ? { dependsOn } : {}),
+    });
+    const plan = [sc('a'), sc('b', [{ id: 'a', soft: false }]), sc('c'), sc('d')];
+    const html = renderGraph(plan, [], () => 'passed', (id) => `sc-${id}`);
+    expect(html).toContain('2 of 4 scenarios have no dependencies and are not drawn here.');
+    expect(html).not.toContain('>c<');
+    const all = renderGraph([sc('a'), sc('b', [{ id: 'a', soft: false }])], [], () => 'passed', (id) => id);
+    expect(all).not.toContain('no dependencies');
+  });
+});

@@ -223,10 +223,12 @@ export function renderGraph(
       return n.kind === 'scenario' && byId.has(n.key) ? `<a href="#${anchor(n.key)}" class="tl-link">${box}</a>` : `<g>${box}</g>`;
     })
     .join('');
+  const undrawn = plan.filter((p) => !keys.has(p.id)).length;
+  const standalone = undrawn ? `<div class="legend">${undrawn} of ${plan.length} scenario${plan.length === 1 ? '' : 's'} ha${undrawn === 1 ? 's' : 've'} no dependencies and ${undrawn === 1 ? 'is' : 'are'} not drawn here.</div>` : '';
   const more = all.length > shown.length ? `<div class="legend">showing ${shown.length} of ${all.length} nodes</div>` : '';
   return `<div class="graph-wrap"><svg class="graph" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Dependency graph">
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="g-arrow"/></marker></defs>
-${edgeSvg}${nodeSvg}</svg></div>${more}
+${edgeSvg}${nodeSvg}</svg></div>${more}${standalone}
 <div class="legend">arrows point from a prerequisite to the scenario/group that waits for it · dashed = soft dependency · rounded = group</div>`;
 }
 
