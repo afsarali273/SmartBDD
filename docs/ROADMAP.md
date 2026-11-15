@@ -86,7 +86,8 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 - [x] Hard vs soft dependencies; skip reason `dependency failed: <id> (<status>)`; group `onDependencyFailure`
 - [x] Exports between scenarios (`ctx.export`, `ctx.from(id).get`), structured-clone copies (ready for processes)
 - [x] Events: `groupStarted/Finished`, planReady `workers`/`groups`, PlannedScenario `groups/dependsOn/locks/priority/exclusive/pulledInBy`
-- [ ] Events: `workerStarted`, `waitedForMs` (worker processes exist now; events not yet)
+- [x] Event `workerStarted` (process pool: pid, start-up time)
+- [ ] Event `waitedForMs`
 - [x] Conformance: `dependencies.feature` (hard/soft/priority); timing rules covered by runtime tests
 - [ ] `@requires:<file.feature>` spec-level preconditions
 - [ ] HTML/console view of the executed graph (timeline per worker) — Phase 5
@@ -107,9 +108,10 @@ Tags: `@group:<name>`, `@id:<id>`, `@dependsOn:<id|group:name>[:soft]`, `@lock:<
 ## Phase 5: Reporting + DX
 
 - [x] HTML report v1 (single file): summary, groups, filters, steps, logs with images, attachments, errors (`html` reporter)
-- [ ] HTML report v2: execution graph, timeline per worker, attempts, history
+- [x] HTML report v2: timeline per worker lane (attempts, retried attempts, worker start-up, busy %, group spans),
+      dependency graph (scenarios + groups, soft dashed), history view; all inline SVG, one offline file
 - [ ] Living documentation view (folder tree = requirements; README.md per folder)
-- [ ] History store + flakiness score
+- [x] History store (`history` config, `.bddx/history`, keep N) + flakiness score + `bddx history`
 - [ ] Cucumber Messages adapter (ADR-007)
 - [ ] Interactive debug mode (pause on failure, inspect context)
 - [ ] VS Code extension + language server (step completion, go to definition)

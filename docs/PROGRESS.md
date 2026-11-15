@@ -3,28 +3,31 @@
 The single source of truth for "where are we" and the session history. Update it at the end of every work session
 (see CLAUDE.md). For a feature-by-feature summary of what is done and what remains, see [STATUS.md](STATUS.md).
 
-## Current state (2026-11-15, session 8)
+## Current state (2026-11-15, session 9)
 
 - **Phases 0–1:** done. **Phase 2:** data core done (composite steps + Phase 2 gate remain).
-- **Phase 3:** done (incl. worker processes `--pool process`) except `@requires`, timeline view, `workerStarted` events.
+- **Phase 3:** done (incl. worker processes `--pool process`, `workerStarted` event) except `@requires`, `waitedForMs`.
+- **Phase 5 (reporting):** HTML v2 (timeline per worker, dependency graph, history view), run history + flakiness
+  score (`history: true`, `bddx history`). DX tools of Phase 5 remain.
 - **Phase 4:** done: scenario/group retry, backoff, worker-crash retry, flaky, quarantine, rerun/merge, soft assertions,
   scenario/group/run time budgets, cancellation and graceful Ctrl+C. Plus step repeat/retry.
 - **DX:** `bddx validate` statically checks specs, config, plans, ids, step coverage, unused glue, hooks and governed tags.
 - **Real-project gate:** `examples/playwright-showcase` passes 119 Playwright UI/API scenarios (504 steps) across 11
   feature files through bddx using four process workers. One command mixes serial and parallel target groups. It is
   optional/live and therefore kept outside root `npm run verify`.
-- **Health:** `npm run verify` green on the user's Mac (157 tests + examples: basic, orchestration (inline + process), resilience).
+- **Health:** `npm run verify` green (164 tests + examples: basic, orchestration (inline + process), resilience).
 - **Working copy:** `/Users/afsarali/Repository/AI_Projects/BDD_Framework`, remote `git@github.com:afsarali273/SmartBDD.git`
   (SSH; the owner pushes from their Mac).
 - **Framing (owner):** an automation framework with BDD-style specs, not BDD-purist. Practical features first.
 
 ## Next up
 
-1. **Phase 6:** plugin API; extract the Playwright showcase lifecycle into a reusable integration with automatic
+1. **Phase 5 DX:** debug mode (`--debug`: inline, 1 worker, no timeouts, pause on failure; `--inspect`), watch mode,
+   CI sharding by duration (`--shard i/n`, balanced with history averages, dependency components kept together),
+   Cucumber Messages adapter, VS Code extension.
+2. **Phase 6:** plugin API; extract the Playwright showcase lifecycle into a reusable integration with automatic
    failure screenshots/traces; HTTP step library, Allure, AI step catalogue + MCP.
-2. **Non-reporting DX:** Cucumber Messages adapter, debug mode (`--inspect` + one worker), VS Code extension, watch mode,
-   CI sharding. HTML v2/history remain planned, but the owner asked to focus outside reporting for now.
-3. Leftovers: text composite steps + Phase 2 gate; `@requires:<file>`; events `workerStarted`/`waitedForMs`.
+3. Leftovers: text composite steps + Phase 2 gate; `@requires:<file>`; event `waitedForMs`; living documentation view.
 
 Parked by the owner for a later phase: **code-linked Markdown specs** (see `docs/design/code-linked-markdown.md`).
 Do not start it without the owner.
@@ -215,3 +218,17 @@ Worked directly in the user's folder via device shell.
   complete process-pool run passes all 119 scenarios and 504 steps, including the intentional retry/flaky scenario.
 - corrected public-target selector timing and documented the expanded matrix in the showcase README, status, roadmap and
   implementation notes.
+
+### 2026-11-15: Session 9 (Phase 5 reporting: HTML v2 + run history)
+
+- Owner chose Phase 5 reporting for this session (overriding the session-8 note). Committed sessions 6–8 work first
+  (`0cc28ae`). The local `node_modules` had macOS-only rolldown/esbuild binaries; Linux arm64 binaries were unpacked
+  next to them (no package.json/lock change) so the cloud VM can run vitest/tsx.
+- core: `history.ts` (`HistoryRecorder`, `loadHistory`, `saveHistory`, `scenarioHistory`, `rankScenarios`); event
+  `workerStarted`.
+- reporters: `html-views.ts` (timeline per worker lane with retried attempts, worker start-up and group rows;
+  dependency graph; history view with pass-rate bars, flakiest table, trend dots, flaky score); html.ts wiring + anchors.
+- runtime: ProcessPool emits `workerStarted`. cli: config `history`, record after each run (not dry runs), previous runs
+  passed to html reporters, `bddx history [--top n]`. `.bddx/` gitignored.
+- tests: core history (score, recorder, keep/load), reporters v2 views, CLI e2e (history + workerStarted). 164 tests.
+- Not committed by this session: `examples/playwright-showcase/src/pages/` (created concurrently by another session).

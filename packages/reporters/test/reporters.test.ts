@@ -217,3 +217,69 @@ describe('stack trimming', () => {
     expect(trimStack(stack)).toBe('Error: boom\n    at Object.fn (/proj/steps/a.steps.ts:3:9)');
   });
 });
+
+describe('HTML report v2 views', () => {
+  it('timeline lanes, dependency graph, history with trend and flaky score', async () => {
+    const { buildPlan } = await import('@bddx/core');
+    const { htmlReporter } = await import('@bddx/reporters');
+    const r = new SupportRegistry();
+    let calls = 0;
+    r.defineStep('ok', () => new Promise((res) => setTimeout(res, 5)));
+    r.defineStep('flaky', () => {
+      if (++calls === 1) throw new Error('first time');
+    });
+    const spec = parseSpec(
+      `Feature: V2
+  @id:setup
+  Scenario: Setup
+    Given ok
+  @dependsOn:setup @retry:1
+  Scenario: Uses setup
+    Given flaky
+  @dependsOn:setup:soft
+  Scenario: Soft user
+    Given ok
+`,
+      'v2.feature',
+    );
+    const plan = buildPlan(spec.scenarios, spec.scenarios, { workers: 2 });
+    const previous = [false, true].map((pass, n) => ({
+      v: 1 as const,
+      runId: `old-${n}`,
+      startedAt: n + 1,
+      durationMs: 5,
+      success: pass,
+      workers: 1,
+      scenarios: { [spec.scenarios[1]!.id]: { s: pass ? ('passed' as const) : ('failed' as const), d: 3, n: 'Uses setup' } },
+    }));
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html2-'));
+    const file = join(dir, 'r.html');
+    const rep = htmlReporter({ outputFile: file, history: previous });
+    const bus = new EventBus();
+    bus.on((e) => rep.onEvent(e));
+    await new Executor({ registry: r, bus, plan }).execute(spec.scenarios);
+    await rep.close?.();
+    const html = readFileSync(file, 'utf8');
+    expect(html).toContain('<summary>Timeline</summary>');
+    expect(html).toMatch(/class="tl-lane">w1</);
+    expect(html).toContain('tb-retried'); // failed attempt that was retried
+    expect(html).toContain('<summary>Dependencies</summary>');
+    expect(html).toContain('class="g-edge soft"');
+    expect(html).toContain('<summary>History</summary>');
+    expect(html).toContain('flaky score'); // failed → passed → flaky this run
+    expect(html).toMatch(/<i class="h-fail"[^>]*><\/i><i class="h-pass"[^>]*><\/i><i class="h-flaky"/);
+    expect(html).toMatch(/href="#sc-1"/); // timeline/graph link to the scenario card
+    expect(html).toContain('id="sc-1"');
+  });
+
+  it('no history section without previous runs; no graph without dependencies', async () => {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html3-'));
+    const file = join(dir, 'r.html');
+    await runWith(htmlReporter({ outputFile: file }));
+    const html = readFileSync(file, 'utf8');
+    expect(html).toContain('<summary>Timeline</summary>');
+    expect(html).not.toContain('<summary>Dependencies</summary>');
+    expect(html).not.toContain('<summary>History</summary>');
+  });
+});

@@ -5,6 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { glob } from 'tinyglobby';
 import {
   EventBus,
+  HistoryRecorder,
+  loadHistory,
+  rankScenarios,
+  saveHistory,
+  type HistoryRun,
   buildPlan,
   idsToRerun,
   mergeEventStreams,
@@ -223,11 +228,17 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
 
   const registry = await loadSupportCode(rootDir, opts, req.quiet);
 
+  const history = req.dryRun ? undefined : historySettings(opts, rootDir);
+  const previousRuns = history ? loadHistory(history.dir, history.keep) : [];
   const reporters =
     req.reporters ??
-    [...(opts.reporters ?? ['console']), ...(req.formats ?? [])].map((spec) => createReporter(withLogLevel(resolveOutputFile(spec, rootDir), opts.logLevel)));
+    [...(opts.reporters ?? ['console']), ...(req.formats ?? [])].map((spec) =>
+      createReporter(withHistory(withLogLevel(resolveOutputFile(spec, rootDir), opts.logLevel), history ? previousRuns : undefined)),
+    );
   const bus = new EventBus();
   for (const r of reporters) bus.on((e) => r.onEvent(e));
+  const recorder = history ? new HistoryRecorder() : undefined;
+  if (recorder) bus.on((e) => recorder.onEvent(e));
 
   const hasParseErrors = specs.some((s) => s.errors.length > 0);
   const useProcesses = opts.pool === 'process' && !req.dryRun && plan.nodes.length > 0;
@@ -272,6 +283,14 @@ export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
 
   const listenerErrors = await bus.flush();
   for (const r of reporters) await r.close?.();
+  const record = recorder?.record();
+  if (history && record && !interrupted) {
+    try {
+      saveHistory(history.dir, record, history.keep);
+    } catch (e) {
+      process.stderr.write(`bddx: could not write run history to ${history.dir}: ${(e as Error).message}\n`);
+    }
+  }
   for (const e of listenerErrors) process.stderr.write(`Reporter error: ${e instanceof Error ? e.stack : String(e)}\n`);
 
   const exitCode: 0 | 1 | 2 | 130 = interrupted ? 130 : hasParseErrors ? 2 : result.success ? 0 : 1;
@@ -334,6 +353,60 @@ export async function prepareWorker(init: unknown, bus: EventBus): Promise<Worke
     remoteWorker: true,
   });
   return { executor, plan: prepared.plan };
+}
+
+/** Resolved `history` option, or undefined when off. */
+export function historySettings(opts: BddxOptions, rootDir: string): { dir: string; keep: number } | undefined {
+  const h = opts.history;
+  if (!h) return undefined;
+  const o = h === true ? {} : h;
+  const keep = o.keep ?? 50;
+  if (!Number.isInteger(keep) || keep < 1) throw new UsageError('history.keep must be a whole number >= 1');
+  return { dir: resolve(rootDir, o.dir ?? '.bddx/history'), keep };
+}
+
+/** The HTML reporter gets previous runs for trends and flakiness scores (unless its options already say otherwise). */
+function withHistory(spec: ReporterSpec, runs: HistoryRun[] | undefined): ReporterSpec {
+  if (!runs) return spec;
+  if (spec === 'html') return ['html', { history: runs }];
+  if (Array.isArray(spec) && spec[0] === 'html' && spec[1]['history'] === undefined) return ['html', { ...spec[1], history: runs }];
+  return spec;
+}
+
+/** `bddx history`: flakiest and slowest scenarios from the recorded runs. */
+export async function historyReport(req: RunRequest & { top?: number } = {}): Promise<string> {
+  const cwd = req.cwd ?? process.cwd();
+  await registerTypeScriptLoader();
+  const loaded = await loadConfig(req.config, cwd, req.profile);
+  const opts = req.sets?.length ? applySetOverrides(loaded.options, req.sets) : loaded.options;
+  const h = historySettings({ ...opts, history: opts.history || true }, loaded.rootDir)!;
+  const runs = loadHistory(h.dir, h.keep);
+  if (!runs.length) {
+    return `No run history in ${relative(cwd, h.dir) || h.dir}. Enable it with \`history: true\` in the config (or --set history=true).\n`;
+  }
+  const top = req.top ?? 10;
+  const ranked = rankScenarios(runs);
+  const unstable = ranked.filter((r) => r.score > 0 || r.failed > 0).slice(0, top);
+  const slow = [...ranked].sort((a, b) => b.avgMs - a.avgMs).slice(0, top);
+  const pad = (s: string, n: number) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
+  const dots = (t: ReadonlyArray<string>) => t.slice(-12).map((x) => (x === 'passed' ? '●' : x === 'failed' ? '✘' : x === 'flaky' ? '◐' : '·')).join('');
+  const fmt = (n: number) => (n < 1000 ? `${n} ms` : `${(n / 1000).toFixed(1)} s`);
+  const passRuns = runs.filter((r) => r.success).length;
+  const out = [
+    `Run history: ${runs.length} run(s) in ${relative(cwd, h.dir) || h.dir}, ${passRuns} passed, ${runs.length - passRuns} failed`,
+    '',
+    'Flakiest / failing (score = share of runs whose outcome flipped or passed only after a retry):',
+    ...(unstable.length
+      ? unstable.map((r) => `  ${r.score.toFixed(2)}  ${pad(dots(r.trend), 12)}  ${pad(`${r.passed}/${r.runs} passed`, 14)} ${r.name}  (${r.id})`)
+      : ['  none: every scenario had the same outcome in every run']),
+    '',
+    'Slowest (average of passed/failed runs):',
+    ...slow.map((r) => `  ${pad(fmt(r.avgMs), 9)} ${r.name}  (${r.id})`),
+    '',
+    'Legend: ● passed  ✘ failed  ◐ flaky  · other',
+    '',
+  ];
+  return out.join('\n');
 }
 
 export function makeDataLoader(rootDir: string, opts: BddxOptions, profile?: string): DataLoader {

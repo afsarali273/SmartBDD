@@ -202,7 +202,12 @@ export class ProcessPool implements RemotePool {
       });
       lane = new Lane(workerId, child, this.opts.onEvent);
       this.lanes.set(workerId, lane);
+      const forked = Date.now();
       child.send({ t: 'init', init: this.opts.init, seed: this.seed, workerId, planFingerprint: this.opts.planFingerprint });
+      lane.ready.then(
+        () => this.opts.onEvent({ type: 'workerStarted', ts: Date.now(), workerId, pid: child.pid ?? 0, startupMs: Date.now() - forked }),
+        () => undefined,
+      );
     }
     await lane.ready;
     return lane;

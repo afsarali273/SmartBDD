@@ -16,6 +16,8 @@ import type {
   StepAttemptFinished,
   StepFinished,
 } from '@bddx/core';
+import { HistoryRecorder, scenarioHistory, type HistoryRun } from '@bddx/core';
+import { renderGraph, renderHistory, renderTimeline, trendDots, VIEW_CSS, type Interval, type Startup } from './html-views.js';
 import { attemptsNote, LogIndex, type ReportLogLevel } from './logs.js';
 import type { Reporter, ReporterOptions } from './types.js';
 
@@ -24,13 +26,19 @@ import type { Reporter, ReporterOptions } from './types.js';
  * Shows: run summary, groups, every scenario with steps, errors, logs (per step and per scenario), attachments
  * (images inline), skip reasons, hook failures and run-level logs. Filters: status, log level, framework logs, search.
  *
+ * v2 views: execution timeline per worker lane (+ group spans), dependency graph, run history (pass-rate per run,
+ * flakiest scenarios, per-scenario trend dots and flaky score).
+ *
  * Options: outputFile (default reports/report.html), title, logLevel (lowest level embedded; default 'debug' so the
- * viewer can switch levels in the page).
+ * viewer can switch levels in the page), history (HistoryRun[] of PREVIOUS runs; the CLI passes it when
+ * `history` is enabled in the config).
  */
 export function htmlReporter(raw: ReporterOptions = {}): Reporter {
   const outputFile = String(raw['outputFile'] ?? 'reports/report.html');
   const title = String(raw['title'] ?? 'bddx report');
   const logs = new LogIndex((raw['logLevel'] as ReportLogLevel | undefined) ?? 'debug', true);
+  const recorder = new HistoryRecorder();
+  const opened = new Map<string, { ts: number; worker: string }>();
   const data: ReportData = {
     title,
     plan: [],
@@ -45,11 +53,15 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
     attachments: [],
     hookFailures: [],
     logs,
+    intervals: [],
+    startups: [],
+    history: Array.isArray(raw['history']) ? (raw['history'] as HistoryRun[]) : [],
   };
   let html = '';
   return {
     name: 'html',
     onEvent(e: BddxEvent) {
+      recorder.onEvent(e);
       switch (e.type) {
         case 'runStarted':
           data.startedAt = e.ts;
@@ -63,6 +75,7 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
           break;
         case 'scenarioStarted':
           data.started.set(e.scenarioId, e);
+          opened.set(`${e.scenarioId}#${e.attempt}`, { ts: e.ts, worker: e.workerId });
           break;
         case 'stepFinished':
           data.steps.set(`${e.scenarioId}|${e.stepId}`, e);
@@ -74,11 +87,22 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
         }
         case 'scenarioFinished':
           {
+            const k = `${e.scenarioId}#${e.attempt}`;
+            const o = opened.get(k);
+            if (o) {
+              opened.delete(k);
+              data.intervals.push({ id: e.scenarioId, attempt: e.attempt, worker: o.worker, start: o.ts, end: e.ts, status: e.status, ...(e.willRetry ? { retried: true } : {}) });
+            }
+          }
+          {
             const previous = data.results.get(e.scenarioId); // group retry re-ran it
             if (previous && previous.status !== 'passed') data.retries.set(e.scenarioId, [...(data.retries.get(e.scenarioId) ?? []), previous]);
           }
           if (e.willRetry) data.retries.set(e.scenarioId, [...(data.retries.get(e.scenarioId) ?? []), e]);
           else data.results.set(e.scenarioId, e);
+          break;
+        case 'workerStarted':
+          data.startups.push({ worker: e.workerId, start: e.ts - e.startupMs, end: e.ts });
           break;
         case 'groupRetrying':
           data.groupRetries.push(e);
@@ -96,6 +120,10 @@ export function htmlReporter(raw: ReporterOptions = {}): Reporter {
           data.summary = e.summary;
           data.success = e.success;
           if (e.error) data.runError = e.error;
+          {
+            const current = recorder.record();
+            if (current && data.history.length) data.history = [...data.history.filter((h) => h.runId !== current.runId), current];
+          }
           html = renderHtml(data);
           break;
         default:
@@ -130,6 +158,10 @@ interface ReportData {
   summary?: RunSummary;
   success?: boolean;
   runError?: ErrorInfo;
+  intervals: Interval[];
+  startups: Startup[];
+  /** Previous runs + this one (last); empty without history. */
+  history: HistoryRun[];
 }
 
 const ICON: Record<Status, string> = { passed: '✔', failed: '✘', skipped: '↷', pending: '…', undefined: '?', ambiguous: '‼' };
@@ -212,6 +244,9 @@ export function renderHtml(d: ReportData): string {
     const k = `${a.scenarioId ?? ''}|${a.stepId ?? ''}`;
     attBy.set(k, [...(attBy.get(k) ?? []), a]);
   }
+  const anchorIds = new Map(d.plan.map((p, i) => [p.id, `sc-${i}`]));
+  const anchor = (id: string) => anchorIds.get(id) ?? 'top';
+  const hasHistory = d.history.length >= 2;
   const byFeature = new Map<string, PlannedScenario[]>();
   for (const sc of d.plan) byFeature.set(sc.uri, [...(byFeature.get(sc.uri) ?? []), sc]);
 
@@ -241,6 +276,8 @@ export function renderHtml(d: ReportData): string {
             r?.quarantined ? '<span class="pill quarantined">quarantined</span>' : '',
             prior.length ? `<span class="pill retried">${prior.length + 1} attempts</span>` : '',
           ].join('');
+          const hist = hasHistory ? scenarioHistory(d.history, sc.id) : undefined;
+          const histHtml = hist && hist.runs > 1 ? `${hist.score > 0 ? `<span class="pill fscore" title="flakiness score over ${hist.runs} runs">flaky score ${hist.score.toFixed(2)}</span>` : ''}${trendDots(hist.trend)}` : '';
           const priorHtml = prior.length
             ? `<details class="tries"><summary>earlier attempts (${prior.length})</summary><ol>${prior
                 .map((a) => `<li class="st-failed"><span class="ico">✘</span> attempt ${a.attempt} <span class="dur">${ms(a.durationMs)}</span>${a.error ? `<div class="terr">${esc(a.error.message)}</div>` : ''}</li>`)
@@ -275,10 +312,10 @@ export function renderHtml(d: ReportData): string {
             .join('');
           const text = esc(`${sc.name} ${sc.id} ${sc.uri} ${sc.tags.join(' ')} ${(sc.groups ?? []).join(' ')}`.toLowerCase());
           const open = status === 'failed' || status === 'ambiguous' || status === 'undefined' ? ' open' : '';
-          return `<details class="scenario st-${status}" data-status="${status}" data-text="${text}"${open}>
+          return `<details class="scenario st-${status}" id="${anchor(sc.id)}" data-status="${status}" data-text="${text}"${open}>
 <summary><span class="ico">${ICON[status]}</span><span class="name">${esc(sc.name)}</span>${
             sc.ruleName ? `<span class="rule">Rule: ${esc(sc.ruleName)}</span>` : ''
-          }${row ? `<span class="row">${esc(row)}</span>` : ''}${flags}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span></summary>
+          }${row ? `<span class="row">${esc(row)}</span>` : ''}${flags}${histHtml}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span></summary>
 <div class="body"><div class="where"><code>${esc(sc.id)}</code> · ${esc(sc.uri)}:${sc.line}</div>${chips ? `<div class="chips">${chips}</div>` : ''}${deps}${
             r?.reason ? `<div class="reason">Skipped: ${esc(r.reason)}</div>` : ''
           }${priorHtml}${renderError(status === 'failed' && !sc.steps.some((st) => d.steps.get(`${sc.id}|${st.id}`)?.error) ? r?.error : undefined)}${renderLogs(
@@ -305,6 +342,15 @@ export function renderHtml(d: ReportData): string {
         .join('')}</div>`
     : '';
   const hookFailures = d.hookFailures.filter((h) => !h.scenarioId);
+  const statusOf = (id: string): Status => d.results.get(id)?.status ?? 'skipped';
+  const timeline = renderTimeline(d.intervals, d.plan, d.groups, anchor, d.startups);
+  const graph = renderGraph(d.plan, d.groups, statusOf, anchor);
+  const historyView = hasHistory ? renderHistory(d.history, anchor, (id) => anchorIds.has(id)) : '';
+  const views = [
+    timeline ? `<details class="view" open><summary>Timeline</summary>${timeline}</details>` : '',
+    graph ? `<details class="view"${d.plan.length <= 60 ? ' open' : ''}><summary>Dependencies</summary>${graph}</details>` : '',
+    historyView ? `<details class="view" open><summary>History</summary>${historyView}</details>` : '',
+  ].join('\n');
   const runSection =
     hookFailures.length || d.logs.run.length || d.runError || d.groupRetries.length
       ? `<section class="feature run"><h2>Run</h2>${renderError(d.runError)}${d.groupRetries
@@ -357,8 +403,8 @@ pre.err{border-color:var(--failed);color:var(--failed)}pre.snippet{border-style:
 .atts{margin:2px 0 2px 22px}figure{margin:6px 0}figcaption{font-size:12px;color:var(--muted)}figure img{max-width:min(100%,900px);border:1px solid var(--line);border-radius:4px}
 .att summary{cursor:pointer;font-size:12px}
 body.min-info .lv-debug,body.min-warn .lv-debug,body.min-warn .lv-info,body.min-error .lv-debug,body.min-error .lv-info,body.min-error .lv-warn{display:none}
-body:not(.show-bddx) .src-bddx{display:none}.hidden{display:none!important}
-</style></head>
+body:not(.show-bddx) .src-bddx{display:none}details.scenario.flash{box-shadow:0 0 0 3px var(--info)}.hidden{display:none!important}
+${VIEW_CSS}</style></head>
 <body class="min-info">
 <header>
 <h1>${esc(d.title)}<span class="badge ${d.success ? 'ok' : 'ko'}">${d.success ? 'PASSED' : 'FAILED'}</span>${d.dryRun ? '<span class="badge ko">DRY RUN</span>' : ''}</h1>
@@ -371,6 +417,7 @@ body:not(.show-bddx) .src-bddx{display:none}.hidden{display:none!important}
 </div>${groups}
 </header>
 <main>
+${views}
 ${features}
 ${runSection}
 </main>
@@ -394,6 +441,12 @@ ${runSection}
   });
   document.getElementById('bddx').addEventListener('change',function(e){body.classList.toggle('show-bddx',e.target.checked)});
   document.getElementById('expand').addEventListener('click',function(){document.querySelectorAll('details.scenario:not(.hidden)').forEach(function(d){d.open=true})});
+  document.addEventListener('click',function(e){
+    var a=e.target&&e.target.closest?e.target.closest('a[href^="#sc-"]'):null;if(!a)return;
+    var t=document.getElementById(a.getAttribute('href').slice(1));if(!t)return;
+    e.preventDefault();t.classList.remove('hidden');t.open=true;t.scrollIntoView({behavior:'smooth',block:'start'});
+    t.classList.add('flash');setTimeout(function(){t.classList.remove('flash')},1200);
+  });
   document.getElementById('collapse').addEventListener('click',function(){document.querySelectorAll('details.scenario').forEach(function(d){d.open=false})});
 })();
 </script>

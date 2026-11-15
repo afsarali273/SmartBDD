@@ -1,6 +1,6 @@
 # bddx: status overview (done so far and what remains)
 
-_Last updated: 2026-11-15 (after session 8: mixed serial/parallel Playwright expansion)._
+_Last updated: 2026-11-15 (after session 9: HTML report v2 and run history)._
 
 This is the one-page answer to "what does bddx do today, and what is left?". It is a summary: details live in
 [IMPLEMENTATION.md](IMPLEMENTATION.md) (how), [DECISIONS.md](DECISIONS.md) (why), [ROADMAP.md](ROADMAP.md) (task
@@ -20,14 +20,14 @@ replaceable adapters. TypeScript first, Java later (same config, events and conf
 | 0 Foundations | Monorepo, spec model, Gherkin parsing, stable ids, tags, event schema, conformance skeleton | ✅ Done (CCK parse gate deferred) |
 | 1 Core runner | Steps, hooks, context, reporters, CLI, config, class steps + DI | ✅ Done (real-project gate passed) |
 | 2 Data-driven specs | CSV/TSV/JSON/YAML/XLSX via `@data:` | 🟡 Data core done; composite steps + gate left |
-| 3 Orchestration | Groups, dependencies, locks, priorities, parallel/serial, worker processes, logging, step repeat/retry | ✅ Done; `@requires`, worker events and timeline view left |
+| 3 Orchestration | Groups, dependencies, locks, priorities, parallel/serial, worker processes, logging, step repeat/retry | ✅ Done; `@requires` and `waitedForMs` event left |
 | 4 Resilience | Scenario/group/run retry, flaky, quarantine, rerun + merge, soft asserts, cancellation and time budgets | ✅ Done |
-| 5 Reporting + DX | HTML v1 done; HTML v2, history, debug mode, IDE support | 🟡 HTML v1 only |
+| 5 Reporting + DX | HTML v2 (timeline, dependency graph, history), run history + flakiness score, `bddx history` | 🟡 Reporting done; DX tools (debug, watch, sharding, IDE, Cucumber Messages) left |
 | 6 Ecosystem | Plugin API, Playwright, HTTP steps, Allure, AI step catalogue/MCP, v1.0 | 🟡 Playwright showcase done; reusable integration pending |
 | 7 Java port | JUnit Platform engine, same config/events/conformance | ⬜ Not started |
 | Parked | Code-linked Markdown specs; callable scenarios | ⏸ Owner decision: later |
 
-**Health:** `npm run verify` is green: 157 tests (unit, conformance, CLI end to end), plus the offline example projects.
+**Health:** `npm run verify` is green: 164 tests (unit, conformance, CLI end to end), plus the offline example projects.
 The optional live `examples/playwright-showcase` project is independently green: 119 scenarios / 504 steps across 11
 feature files against The Internet, SauceDemo, TodoMVC, JSONPlaceholder and DummyJSON (not part of root verify because
 it requires network access and a Chromium download).
@@ -123,17 +123,26 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 - `--log-level` controls the console. Framework diagnostics appear at `debug`.
 - Reporters:
   - **console** (pretty or progress, with retry/flaky/quarantine markers)
-  - **HTML v1** (one self-contained file: filters, steps, logs with images, attachments, attempts, trimmed stacks)
+  - **HTML v2** (one self-contained file, works offline):
+    - filters, steps, logs with images, attachments, attempts, trimmed stacks (v1)
+    - **timeline**: one lane per worker (bars = scenario attempts, retried attempts hatched, worker start-up shown,
+      busy %), plus one row per group; bars link to the scenario
+    - **dependency graph**: scenarios and groups that depend on each other, laid out left to right; soft
+      dependencies dashed
+    - **history**: pass rate per run, flakiest scenarios table, and per-scenario trend dots + flaky score
   - **JUnit XML** (Surefire `flakyFailure`; quarantined failures become `<skipped>`)
   - **Cucumber JSON**
   - **NDJSON** event stream (versioned schema; the source of truth for every other report)
+- **Run history** (`history: true`): one small JSON record per run in `.bddx/history` (last 50 kept). Flakiness
+  score = share of runs whose outcome flipped or that passed only after a retry (a consistently failing scenario
+  scores 0: it is broken, not flaky). `bddx history` prints the flakiest and slowest scenarios.
 
 ### 2.11 Validation, configuration and CLI
 - `bddx validate` checks every configured spec without executing tests or parameter transformers: parse/config/plan
   errors, duplicate ids, undefined/ambiguous steps, unused definitions and unmatched hooks. Optional
   `validation.allowedTagKeys` enables tag governance; `--fail-on-warnings` makes warnings fail CI.
 - `bddx.config.{ts,mts,js,mjs,json}` via `defineConfig`, `profiles`, and `--set path=value` overrides for any option.
-- Commands: `run` (default), `list`, `snippets`, `validate`, `plan`, `report`. Exit codes: 0 passed, 1 failed,
+- Commands: `run` (default), `list`, `snippets`, `validate`, `plan`, `report`, `history`. Exit codes: 0 passed, 1 failed,
   2 usage/config/parse error, 130 interrupted.
 
 ### 2.12 Architecture and quality
@@ -143,7 +152,7 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 - Four runnable examples: `examples/basic`, `examples/orchestration`, `examples/resilience`, plus the standalone
   `examples/playwright-showcase` real project (119 UI/API scenarios across 11 feature files, powered by Playwright but
   run by bddx).
-- 23 ADRs recording the design decisions.
+- 24 ADRs recording the design decisions.
 
 ---
 
@@ -168,24 +177,20 @@ scope. Failure semantics (what is skipped and what still runs) are a documented 
 `features`, `steps`, `tags`, `name`, `reporters`, `params`, `stepTimeoutMs`, `failFast`, `strict`, `language`, `dataDir`,
 `workers`, `pool`, `groups` (mode, workers, dependsOn, onDependencyFailure, priority, locks, match, retry, retryMembers,
 scenarioRetry, timeout), `defaultMode`, `logLevel`, `retry` (scenario, delay, backoff, workerCrash, on, failOnFlaky),
-`scenarioTimeout`, `runTimeout`, `validation`, `profiles`.
+`scenarioTimeout`, `runTimeout`, `validation`, `history` (true or {dir, keep}), `profiles`.
 
 ### 3.3 CLI flags
 `-c/--config`, `-p/--profile`, `-t/--tags`, `--name`, `-f/--format`, `-D/--define`, `--dry-run`, `--fail-fast`,
 `--no-strict`, `--timeout`, `-w/--workers`, `--pool`, `-s/--set`, `--log-level`, `--no-deps`, `-r/--retry`,
-`--worker-crash-retry`, `--run-timeout`, `--fail-on-flaky`, `--rerun-failed`, `--fail-on-warnings`, `--plan-format`, `--explain`.
+`--worker-crash-retry`, `--run-timeout`, `--fail-on-flaky`, `--rerun-failed`, `--fail-on-warnings`, `--plan-format`, `--explain`,
+`--top` (with `bddx history`). Commands: `run`, `list`, `snippets`, `validate`, `plan`, `report`, `history`.
 
 ---
 
 ## 4. What remains
 
 ### 4.1 Next (in order)
-1. **Phase 5: reporting and DX**
-   - HTML report v2:
-     - timeline per worker lane (from `scenarioStarted.workerId`)
-     - execution graph (Mermaid)
-     - richer attempts view
-   - History store and flakiness score across runs.
+1. **Phase 5: the rest (developer experience)**
    - Debug mode: `--inspect` with a single worker, plus pause on failure.
    - Cucumber Messages adapter, so Cucumber-ecosystem tools can read bddx output.
    - Watch mode; CI sharding by duration.
@@ -211,7 +216,7 @@ scenarioRetry, timeout), `defaultMode`, `logLevel`, `retry` (scenario, delay, ba
   - SQL/HTTP data providers (with the plugin API)
 - **Phase 3:**
   - `@requires:<file.feature>` spec-level preconditions
-  - `workerStarted` and `waitedForMs` events
+  - `waitedForMs` event (`workerStarted` is done)
 - **Phase 0/1 gates:**
   - parse the Cucumber Compatibility Kit features
   - ~~run a real project end to end~~ done by `examples/playwright-showcase`

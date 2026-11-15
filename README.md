@@ -183,6 +183,14 @@ bddx run --rerun-failed reports/run1.ndjson -f ndjson:reports/run2.ndjson
 bddx report reports/run1.ndjson reports/run2.ndjson -f html:reports/report.html -f junit:reports/junit.xml
 ```
 
+Reports and run history: the `html` reporter is one offline file with a timeline per worker, the dependency graph and,
+with `history: true` in the config, pass-rate trends and flakiness scores across runs:
+
+```bash
+bddx run -f html:reports/report.html --set history=true
+bddx history --top 10        # flakiest and slowest scenarios
+```
+
 `bddx plan` prints the graph (`--plan-format mermaid` for a diagram, `--explain <id>` for one scenario).
 
 ```ts

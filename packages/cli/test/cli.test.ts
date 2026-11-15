@@ -3,7 +3,7 @@
  * these tests are skipped when the build output is missing.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -319,5 +319,37 @@ describe.skipIf(!built)('applySetOverrides', () => {
       expect(r.code).toBe(2);
       expect(r.err).toContain('--pool must be inline or process');
     });
+  });
+
+  it('history: records runs, feeds the HTML report and bddx history ranks flaky scenarios', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-hist-e2e-'));
+    const html = join(dir, 'r.html');
+    const set = ['--set', `history={"dir":"${dir.split('\\').join('/')}/h","keep":5}`];
+    for (let i = 0; i < 3; i++) expect(bddxIn(resilience, 'run', ...set, '-f', `html:${html}`).code).toBe(0);
+    expect(readdirSync(join(dir, 'h'))).toHaveLength(3);
+    const page = readFileSync(html, 'utf8');
+    expect(page).toContain('<summary>History</summary>');
+    expect(page).toContain('flaky score 1.00');
+    const h = bddxIn(resilience, 'history', ...set, '--top', '2');
+    expect(h.code).toBe(0);
+    expect(h.out).toContain('Run history: 3 run(s)');
+    expect(h.out).toMatch(/1\.00  ◐◐◐ +3\/3 passed +(Pay through a flaky API|Warm the cache)/);
+    const none = bddxIn(resilience, 'history', '--set', `history={"dir":"${dir.split('\\').join('/')}/none"}`);
+    expect(none.out).toContain('No run history');
+    const dry = bddxIn(resilience, 'run', '--dry-run', ...set);
+    expect(dry.code).toBe(0);
+    expect(readdirSync(join(dir, 'h'))).toHaveLength(3); // dry runs are not recorded
+  });
+
+  it('process pool emits workerStarted and the HTML timeline shows start-up', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-ws-'));
+    const events = join(dir, 'e.ndjson');
+    const html = join(dir, 'r.html');
+    const r = bddxIn(poolProject, 'run', '-f', `ndjson:${events}`, '-f', `html:${html}`);
+    expect(r.code).toBe(0);
+    const started = readFileSync(events, 'utf8').split('\n').filter((l) => l.includes('"workerStarted"')).map((l) => JSON.parse(l));
+    expect(started.map((e) => e.workerId).sort()).toEqual(['w1', 'w2']);
+    expect(started[0].startupMs).toBeGreaterThan(0);
+    expect(readFileSync(html, 'utf8')).toContain('class="tl-boot"');
   });
 });

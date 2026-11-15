@@ -362,6 +362,27 @@ Playwright supplies only Chromium and `APIRequestContext`.
 This proves the Phase 1 real-project gate and provides the reference implementation for a future reusable Playwright
 plugin. Automatic failure-only trace capture still belongs to that package-level Phase 6 work.
 
+## 2g. Reporting v2 and run history (Phase 5)
+
+| Piece | Where |
+| --- | --- |
+| `HistoryRecorder` (events → `HistoryRun`), `loadHistory`, `saveHistory` (keep N), `scenarioHistory`, `rankScenarios` | `core/src/history.ts` |
+| Timeline / dependency graph / history views (inline SVG + CSS) | `reporters/src/html-views.ts` |
+| HTML reporter: collects attempt intervals (scenarioStarted/Finished by `id#attempt`), `workerStarted` start-ups, option `history` (previous runs) | `reporters/src/html.ts` |
+| `history` config, write after the run, previous runs injected into `html` reporters, `bddx history` | `cli/src/run.ts` (`historySettings`, `withHistory`, `historyReport`), `cli/src/main.ts` |
+| `workerStarted` event (fork → ready) | `runtime/src/pool.ts` |
+
+- **Record** (`HistoryRun` v1): runId, startedAt, durationMs, success, workers, and per scenario id the final status,
+  duration, attempts, flaky flag and name. Final attempts only (`willRetry` attempts are ignored).
+- **Score** (`scenarioHistory`): over runs where the scenario passed or failed; run i is unstable if flaky or its
+  pass/fail outcome differs from the previous such run; score = unstable / runs (0 with < 2 runs).
+- **Timeline**: an attempt is drawn as "retried" (hatched) when it did not pass and a later attempt of the same
+  scenario exists (scenario or group retry). Lane label shows busy % (sum of bars / wall time). Group rows span first
+  member start → last member end. `workerId: 'scheduler'` (skipped before starting) is not drawn.
+- **Graph**: nodes = scenarios with `@dependsOn` edges and groups with `dependsOn` (or `group:` targets); layer =
+  longest path; capped at 150 nodes. Opened by default for plans of ≤ 60 scenarios.
+- **Anchors**: scenario cards have `id="sc-<plan index>"`; a click on a bar/node opens and scrolls to the card.
+
 ## 2d. Configuration sources and precedence
 
 Lowest → highest: built-in defaults → `bddx.config.*` → `--profile <p>` (merged; tags ANDed, params/groups merged by

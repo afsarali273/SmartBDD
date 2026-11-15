@@ -206,3 +206,16 @@ would make the otherwise deterministic framework CI unreliable and slow.
 **Consequence.** The showcase proves lifecycle and reporting patterns, but does not pretend to be the final Phase 6
 integration package. Reusable fixtures, automatic screenshots/traces only on failure, browser selection and shared
 configuration remain extraction work.
+
+## ADR-024 HTML v2 views as inline SVG; history as per-run JSON files (2026-11-15)
+
+- **Inline SVG, no Mermaid/JS libraries.** The report must stay one self-contained file that opens offline (CI artifacts,
+  email). Timeline and dependency graph are laid out by bddx (`reporters/src/html-views.ts`): lanes from
+  `scenarioStarted.workerId`, longest-path layering for the graph. `bddx plan --plan-format mermaid` remains for docs.
+- **History = one compact JSON file per run** in `.bddx/history` (`<startedAt>-<runId>.json`, newest `keep` kept).
+  Files are append-only and merge-friendly (CI can cache/restore the folder), need no database and are cheap to read.
+  Built from events by `HistoryRecorder` (core), so `bddx report` and the Java port can produce the same records.
+- **Flakiness score** = share of recorded runs that were unstable (outcome differs from the previous run, or passed only
+  after a retry). Consistent failures score 0 on purpose: broken ≠ flaky.
+- **Opt-in** (`history: true`): bddx does not write into a project folder unasked. Dry runs are never recorded.
+- New event `workerStarted` (additive) so the timeline can tell worker start-up apart from idle time.

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
-import { discoverSpecs, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
+import { discoverSpecs, historyReport, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
 import { formatValidation, validateProject } from './validate.js';
 import type { Reporter } from '@bddx/reporters';
 
@@ -14,6 +14,7 @@ Usage:
   bddx list  [paths...] [options]    List selected scenarios with ids and tags, without running
   bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
   bddx validate [paths...] [options] Static checks: specs, plan, steps, hooks and unused definitions
+  bddx history [--top <n>]           Flakiest and slowest scenarios from the recorded run history (config history: true)
   bddx report <events.ndjson...>     Build reports from event files; several files are merged (later runs win)
              -f html:reports/report.html -f junit:reports/junit.xml
   bddx plan  [paths...] [options]    Show the execution plan: groups, dependencies, locks (runs nothing)
@@ -75,6 +76,7 @@ export async function main(argv: string[]): Promise<number> {
         'fail-on-flaky': { type: 'boolean' },
         'rerun-failed': { type: 'string' },
         'fail-on-warnings': { type: 'boolean' },
+        top: { type: 'string' },
         'log-level': { type: 'string' },
         'plan-format': { type: 'string' },
         explain: { type: 'string' },
@@ -98,7 +100,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (['run', 'list', 'snippets', 'validate', 'plan', 'report'].includes(positionals[0] ?? '')) {
+  if (['run', 'list', 'snippets', 'validate', 'plan', 'report', 'history'].includes(positionals[0] ?? '')) {
     command = positionals[0]!;
     paths = positionals.slice(1);
   }
@@ -114,6 +116,19 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'report') return await reportFromEvents(paths, values.format ?? []);
+    if (command === 'history') {
+      const top = values.top !== undefined ? Number(values.top) : undefined;
+      if (top !== undefined && (!Number.isInteger(top) || top < 1)) throw new UsageError(`--top expects a positive integer, got "${values.top}"`);
+      process.stdout.write(
+        await historyReport({
+          ...(values.config ? { config: values.config } : {}),
+          ...(values.profile ? { profile: values.profile } : {}),
+          ...(values.set ? { sets: values.set } : {}),
+          ...(top ? { top } : {}),
+        }),
+      );
+      return 0;
+    }
     const retry = values.retry !== undefined ? Number(values.retry) : undefined;
     if (retry !== undefined && (!Number.isInteger(retry) || retry < 0)) throw new UsageError(`--retry expects a whole number >= 0, got "${values.retry}"`);
     const workerCrashRetry = values['worker-crash-retry'] !== undefined ? Number(values['worker-crash-retry']) : undefined;

@@ -238,6 +238,15 @@ export interface ScenarioFinished extends Base {
   quarantined?: boolean;
 }
 
+/** A worker process is ready (process pool only). Emitted again when a lane respawns after a crash. */
+export interface WorkerStarted extends Base {
+  type: 'workerStarted';
+  workerId: string;
+  pid: number;
+  /** Time from fork until the worker had loaded config, specs and support code. */
+  startupMs: number;
+}
+
 /** A retry group is about to run (some of) its members again. */
 export interface GroupRetrying extends Base {
   type: 'groupRetrying';
@@ -274,6 +283,7 @@ export type BddxEvent =
   | GroupStarted
   | GroupFinished
   | GroupRetrying
+  | WorkerStarted
   | FeatureStarted
   | FeatureFinished
   | HookStarted

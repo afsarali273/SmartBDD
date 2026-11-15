@@ -69,6 +69,11 @@ export interface BddxOptions {
   runTimeout?: string | number;
   /** Console log level: 'debug' | 'info' (default) | 'warn' | 'error' | 'silent'. Events always contain every log; file reports have their own `logLevel` option. */
   logLevel?: LogLevel | 'silent';
+  /**
+   * Run history for flakiness scores, trends in the HTML report and `bddx history`. `true` = `.bddx/history`
+   * (relative to the config folder), keeping the last 50 runs. Dry runs are never recorded.
+   */
+  history?: boolean | { dir?: string; keep?: number };
   /** Optional governance for `bddx validate`. Built-in orchestration/data tags are always allowed. */
   validation?: {
     /** Custom tag keys allowed by the project, without `@` (for example `smoke`, `owner`). */
@@ -79,7 +84,7 @@ export interface BddxOptions {
 /** Every top-level option `--set` may change. Keep in sync with BddxOptions. */
 export const OPTION_KEYS = [
   'features', 'steps', 'tags', 'name', 'reporters', 'params', 'stepTimeoutMs', 'failFast', 'strict',
-  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation',
+  'language', 'dataDir', 'workers', 'groups', 'defaultMode', 'logLevel', 'retry', 'scenarioTimeout', 'runTimeout', 'pool', 'validation', 'history',
 ] as const;
 
 /**
