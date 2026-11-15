@@ -504,13 +504,18 @@ function withLogLevel(spec: ReporterSpec, level: BddxOptions['logLevel']): Repor
 }
 
 /** Report paths in the config are relative to the config folder, not to the shell's cwd. */
+/** The messages reporter re-reads the feature files; they live under the project root. */
+function sourceRootFor(name: string, rootDir: string): { sourceRoot?: string } {
+  return name === 'messages' || name === 'cucumber-messages' ? { sourceRoot: rootDir } : {};
+}
+
 function resolveOutputFile(spec: ReporterSpec, rootDir: string): ReporterSpec {
   if (typeof spec === 'string') {
     const i = spec.indexOf(':');
-    return i > 0 ? [spec.slice(0, i), { outputFile: resolve(rootDir, spec.slice(i + 1)) }] : spec;
+    return i > 0 ? [spec.slice(0, i), { outputFile: resolve(rootDir, spec.slice(i + 1)), ...sourceRootFor(spec.slice(0, i), rootDir) }] : sourceRootFor(spec, rootDir).sourceRoot ? [spec, sourceRootFor(spec, rootDir)] : spec;
   }
   if (Array.isArray(spec) && typeof spec[1]['outputFile'] === 'string') {
-    return [spec[0], { ...spec[1], outputFile: resolve(rootDir, spec[1]['outputFile']) }];
+    return [spec[0], { ...sourceRootFor(spec[0], rootDir), ...spec[1], outputFile: resolve(rootDir, spec[1]['outputFile']) }];
   }
   return spec;
 }

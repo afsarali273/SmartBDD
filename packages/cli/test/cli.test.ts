@@ -3,7 +3,7 @@
  * these tests are skipped when the build output is missing.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -378,5 +378,47 @@ describe.skipIf(!built)('applySetOverrides', () => {
     const bad = spawnSync(process.execPath, [bin, '--shard', '5/2'], { cwd: orchestration, encoding: 'utf8' });
     expect(bad.status).toBe(2);
     expect(bad.stderr).toContain('--shard expects');
+  });
+
+  it('-f messages writes a valid Cucumber Messages stream (basic example: pickles, test cases, results)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-msg-'));
+    const file = join(dir, 'm.ndjson');
+    const r = spawnSync(process.execPath, [bin, '-f', `messages:${file}`, '-f', 'progress'], { cwd: join(orchestration, '..', 'basic'), encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    const { parseEnvelope } = await import('@cucumber/messages');
+    const envelopes = readFileSync(file, 'utf8').trim().split('\n').map((l) => parseEnvelope(l));
+    const kinds = envelopes.map((e) => Object.keys(e)[0]!);
+    expect(kinds[0]).toBe('meta');
+    expect(kinds.at(-1)).toBe('testRunFinished');
+    const count = (k: string) => kinds.filter((x) => x === k).length;
+    expect(count('testCase')).toBe(count('testCaseStarted'));
+    expect(count('testCaseStarted')).toBe(count('testCaseFinished'));
+    expect(count('testStepStarted')).toBe(count('testStepFinished'));
+    expect(count('gherkinDocument')).toBeGreaterThan(0);
+    // every testCase refers to a pickle that was emitted earlier, and runs after its definition
+    const pickles = new Set(envelopes.flatMap((e) => (e.pickle ? [e.pickle.id] : [])));
+    const cases = envelopes.flatMap((e) => (e.testCase ? [e.testCase] : []));
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) expect(pickles.has(c.pickleId)).toBe(true);
+    expect(kinds.indexOf('testRunStarted')).toBeLessThan(kinds.indexOf('testCase'));
+    expect(kinds.lastIndexOf('testCase')).toBeLessThan(kinds.indexOf('testCaseStarted'));
+    const statuses = new Set(envelopes.flatMap((e) => (e.testStepFinished ? [e.testStepFinished.testStepResult.status] : [])));
+    expect([...statuses]).toEqual(['PASSED']);
+    expect(envelopes.at(-1)!.testRunFinished!.success).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('-f messages reports retries as attempts with willBeRetried', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-msg-'));
+    const file = join(dir, 'm.ndjson');
+    spawnSync(process.execPath, [bin, '-f', `messages:${file}`, '-f', 'progress'], { cwd: resilience, encoding: 'utf8' });
+    const { parseEnvelope } = await import('@cucumber/messages');
+    const envelopes = readFileSync(file, 'utf8').trim().split('\n').map((l) => parseEnvelope(l));
+    const started = envelopes.flatMap((e) => (e.testCaseStarted ? [e.testCaseStarted] : []));
+    const finished = envelopes.flatMap((e) => (e.testCaseFinished ? [e.testCaseFinished] : []));
+    expect(started.some((s) => s.attempt >= 1)).toBe(true);
+    expect(finished.some((f) => f.willBeRetried)).toBe(true);
+    expect(envelopes.some((e) => e.testStepFinished?.testStepResult.status === 'FAILED' && e.testStepFinished.testStepResult.exception)).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
