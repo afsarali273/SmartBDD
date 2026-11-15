@@ -1,0 +1,36 @@
+title: Locks and priority
+section: Orchestration
+desc: Stop tests that share a resource from running at the same time, run one test alone, and decide what starts first.
+lede: Parallel runs break when two tests change the same thing at once. Locks keep those tests apart. Priority decides what starts first when there is a choice.
+---
+<h2>Locks</h2>
+<p>Give the scenarios that share a resource the same lock name. Scenarios with the same lock never run at the same time, even on different workers. Scenarios with different locks, or none, are not affected.</p>
+<cb lang="gherkin">@lock:payments-db
+Scenario: Refund an order
+  ...
+
+@lock:payments-db
+Scenario: Close the day
+  ...</cb>
+<p>To lock a whole group, list the lock in the config. Every member holds it.</p>
+<cb title="bddx.config.ts">groups: {
+  payments: { mode: 'serial', locks: ['payments-db'] },
+},</cb>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>Name locks after the thing they protect, such as <code>payments-db</code> or <code>admin-user</code>, not after the test.</p></aside>
+
+<h2>Exclusive</h2>
+<p>Use <code>@exclusive</code> for a scenario that must run with nothing else running, such as one that restarts a service. A group with <code>mode: 'exclusive'</code> does the same for its members.</p>
+<cb lang="gherkin">@exclusive
+Scenario: Restart the API gateway
+  ...</cb>
+
+<h2>Priority</h2>
+<p>When more scenarios are ready than workers are free, bddx starts the one with the lowest priority number first. The default is 0.</p>
+<cb lang="gherkin">@priority:-5
+Scenario: Smoke test the home page</cb>
+<ul>
+  <li>A scenario's <code>@priority</code> wins over its group's <code>priority</code>.</li>
+  <li>With several groups, the lowest group priority applies.</li>
+  <li>Priority never breaks a dependency. A scenario still waits for what it depends on.</li>
+</ul>
+<p>Use a negative priority to put slow or important scenarios first, so they do not start last and stretch the run.</p>

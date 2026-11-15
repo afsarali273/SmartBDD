@@ -1,0 +1,68 @@
+title: Groups
+section: Orchestration
+desc: Put scenarios into groups and give each group a mode, a worker limit and an order.
+lede: A group is a named set of scenarios with its own rules. Use groups to say that setup runs first, checkout runs three at a time and payments runs one at a time.
+---
+<h2>Put scenarios in a group</h2>
+<p>There are two ways. Use whichever fits, or both.</p>
+<ul>
+  <li>Add <code>@group:name</code> to a feature, a rule or a scenario.</li>
+  <li>Give the group a <code>match</code> tag expression in the config. Every scenario that matches joins the group.</li>
+</ul>
+<cb lang="gherkin" title="features/checkout.feature">@group:checkout
+Feature: Checkout
+  Scenario: Buy an apple
+    Given I am logged in
+    When I buy "apple"
+    Then the order is confirmed</cb>
+<p>Scenarios in no group run with <code>defaultMode</code>.</p>
+
+<h2>Describe the groups in the config</h2>
+<cb title="bddx.config.ts">import { defineConfig } from '@bddx/cli';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  workers: 4,
+  groups: {
+    setup:    { mode: 'serial', priority: -10 },
+    checkout: { mode: 'parallel', workers: 3, dependsOn: ['setup'], match: '@checkout' },
+    payments: { mode: 'serial', dependsOn: ['setup'], locks: ['payments-db'] },
+    reports:  { dependsOn: ['checkout', 'payments'], onDependencyFailure: 'run' },
+  },
+});</cb>
+<p>This is the config of <code>examples/orchestration</code>. Run <code>npx bddx plan</code> in that folder to see the schedule it produces.</p>
+
+<h2>Group options</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td><td><code>'parallel'</code>: members run side by side. <code>'serial'</code>: one member at a time. <code>'exclusive'</code>: nothing else runs while a member runs.</td></tr>
+<tr><td><code>workers</code></td><td>The most members of this group that run at once. The run-wide <code>workers</code> still applies.</td></tr>
+<tr><td><code>dependsOn</code></td><td>Names of groups that must settle first. See <a href="dependencies.html">Dependencies</a>.</td></tr>
+<tr><td><code>onDependencyFailure</code></td><td><code>'skip'</code> (default): members are skipped if a dependency group failed. <code>'run'</code>: members run anyway.</td></tr>
+<tr><td><code>priority</code></td><td>Lower numbers are scheduled earlier. See <a href="locks.html">Locks and priority</a>.</td></tr>
+<tr><td><code>locks</code></td><td>Lock names held by every member. See <a href="locks.html">Locks and priority</a>.</td></tr>
+<tr><td><code>match</code></td><td>A tag expression that adds scenarios to the group.</td></tr>
+<tr><td><code>retry</code>, <code>retryMembers</code>, <code>scenarioRetry</code></td><td>Re-run the whole group. See <a href="retries.html">Retries and flaky tests</a>.</td></tr>
+<tr><td><code>timeout</code></td><td>Time budget for the group, for example <code>'10m'</code>.</td></tr>
+</tbody></table></div>
+
+<h2>See the plan before you run</h2>
+<cb lang="bash">$ npx bddx plan
+$ npx bddx plan --plan-format mermaid
+$ npx bddx plan --explain features/checkout.feature::buy-an-apple</cb>
+<p><code>--explain</code> takes a scenario id and says why it runs when it does: which group it is in, what it waits for and which locks it holds.</p>
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">Terminal output of <code>npx bddx plan</code> for the orchestration example.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>In <code>examples/orchestration</code> run <code>npx bddx plan</code>. Capture the whole output in a terminal with a light theme, about 100 columns wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/groups-plan.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>Change a group from the command line</h2>
+<p>Any group option can be overridden for one run with <code>--set</code>. See <a href="profiles.html">Profiles and --set</a>.</p>
+<cb lang="bash">$ npx bddx run --set groups.checkout.mode=serial</cb>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>A scenario's own tags win over its group, and a group wins over a command-line flag. For example, <code>@retry:3</code> on a scenario beats <code>--retry 1</code>.</p></aside>

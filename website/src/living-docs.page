@@ -1,0 +1,37 @@
+title: Living documentation
+section: Reports
+desc: Turn your feature folders into one browsable page, coloured by the latest results, with bddx docs.
+lede: Your feature files already describe what the product does. The docs command presents them as a readable page, so people who do not run tests can browse them.
+---
+<h2>Build it</h2>
+<cb lang="bash">$ npx bddx docs -o reports/living-docs.html
+$ npx bddx docs features --results reports/events.ndjson --title "Shop behaviour"</cb>
+<div class="signature">
+  <code>bddx docs [paths...] [options]</code>
+  <p>Writes one offline HTML page.</p>
+  <dl class="params">
+    <dt>-o file</dt><dd>Where to write it. Default <code>reports/living-docs.html</code>.</dd>
+    <dt>--results file</dt><dd>An NDJSON event file. Repeatable. Colours each scenario by its result. Without it, the latest recorded history run is used.</dd>
+    <dt>--title text</dt><dd>The page title.</dd>
+  </dl>
+</div>
+
+<h2>What you get</h2>
+<ul>
+  <li>A folder tree for navigation. Each folder's <code>README.md</code> is its introduction, and its first heading is the folder's title.</li>
+  <li>Features with their descriptions, scenarios, steps, data tables and doc strings, and tags as chips.</li>
+  <li>Search across all of it.</li>
+  <li>With results, scenarios are coloured and each folder shows a roll-up.</li>
+</ul>
+<aside class="callout note"><p class="callout-title">Markdown</p><p>README files use a small, safe subset of Markdown. Links are limited to http, https, mailto and relative paths.</p></aside>
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">The living documentation page with the folder tree, a feature and coloured scenarios.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>In <code>examples/basic</code> run <code>npx bddx -f ndjson:reports/events.ndjson</code> then <code>npx bddx docs --results reports/events.ndjson</code>, open the page, select the Shopping basket feature and capture it. Light theme, about 1400 px wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/living-docs.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>Publish it</h2>
+<p>The page is one file. Publish it as a CI artifact, or copy it to any static host after each run on your main branch, so the documentation always matches the tests.</p>

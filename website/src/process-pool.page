@@ -1,0 +1,47 @@
+title: Worker processes
+section: Orchestration
+desc: Choose between the inline pool and one Node.js process per worker, and know what is shared between them.
+lede: By default bddx runs scenarios as concurrent async tasks in one process. Switch to the process pool when you want real CPU parallelism or isolation from crashes.
+---
+<h2>Two pools</h2>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th><code>pool: 'inline'</code> (default)</th><th><code>pool: 'process'</code></th></tr></thead>
+<tbody>
+<tr><td>How it runs</td><td>Async concurrency in one Node.js process. <code>workers</code> sets the number of lanes.</td><td>One Node.js process per lane.</td></tr>
+<tr><td>Good for</td><td>API tests and small suites. Fast start.</td><td>Browser suites and CPU-heavy steps. A crash only fails one scenario.</td></tr>
+<tr><td>Worker hooks</td><td>Once per run.</td><td>Once in every worker process.</td></tr>
+<tr><td>Memory and globals</td><td>Shared by all scenarios.</td><td>Separate per process.</td></tr>
+</tbody></table></div>
+<cb lang="bash">$ npx bddx run --workers 4 --pool process</cb>
+<cb title="bddx.config.ts">export default defineConfig({
+  workers: 4,
+  pool: 'process',
+});</cb>
+
+<h2>What the parent and the workers do</h2>
+<ul>
+  <li>The parent process owns the plan, the scheduling, the reports and the <code>BeforeAll</code> and <code>AfterAll</code> hooks.</li>
+  <li>Each worker loads your step files and rebuilds the same plan. bddx compares a fingerprint of the plan, so a worker that loaded different files stops the run instead of running the wrong thing.</li>
+  <li>The values you set in <code>BeforeAll</code> on <code>ctx.run</code> are copied to every worker.</li>
+  <li>Each worker gets the environment variables <code>BDDX_WORKER_ID</code> and <code>BDDX_WORKER_INDEX</code>. Use the index to pick a port or a test account per worker.</li>
+</ul>
+<figure class="placeholder" data-kind="ai" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">Diagram: a parent process sending scenarios to three worker processes and collecting events.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Generate with an AI diagram or image tool. Prompt:</p>
+    <pre class="prompt">Flat technical diagram on white, font IBM Plex Sans, thin navy (#171A33) lines. Left: one box "Parent process" containing three small labels "plan and scheduler", "BeforeAll / AfterAll", "reporters". Right: three stacked boxes "Worker 1", "Worker 2", "Worker 3", each containing "step files", "BeforeWorker", "browser plugin". Arrows from parent to each worker labelled "run scenario" in deep cyan (#0B7A86), and arrows from each worker back to the parent labelled "events" in slate (#5B6385). Below the workers a dashed note "each worker is a separate Node.js process". No gradients or shadows.</pre>
+    <p class="placeholder-file">Save as <code>assets/img/process-pool.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>Crashes</h2>
+<p>If a worker process dies in the middle of a scenario, only that scenario fails and the lane starts a new process. Its <code>After</code> hooks do not run. Set <code>retry.workerCrash</code> to retry the scenario on a fresh process. If a worker cannot start at all, the run stops.</p>
+
+<h2>Sharing data between workers</h2>
+<p>Things that are per process with the process pool:</p>
+<ul>
+  <li><code>ctx.feature</code> and <code>ctx.groups</code> stores, and module-level variables.</li>
+  <li>Feature, group and rule hooks. They run once in each process that runs a member.</li>
+</ul>
+<p>To share a value, use <code>ctx.export</code> and <code>ctx.from</code> (see <a href="dependencies.html">Dependencies</a>), or an external system such as a database.</p>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>Start with the inline pool. Switch to <code>process</code> when browser tests become the bottleneck or you need crash isolation.</p></aside>

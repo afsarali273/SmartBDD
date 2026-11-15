@@ -1,0 +1,49 @@
+title: Reporters
+section: Reports
+desc: The reporters bddx ships, how to choose them in the config or on the command line, and what each is for.
+lede: Reporters turn a run into something you can read or feed to another tool. You can use several at once. They all read the same event stream.
+---
+<h2>Choose reporters</h2>
+<div class="tabs" data-group="rep">
+  <section data-tab="cli" data-label="Command line">
+<cb lang="bash">$ npx bddx -f html:reports/report.html -f junit:reports/junit.xml</cb>
+  </section>
+  <section data-tab="config" data-label="Config">
+<cb title="bddx.config.ts">reporters: [
+  'console',
+  ['html', { outputFile: 'reports/report.html', title: 'Shop tests' }],
+  'junit:reports/junit.xml',
+  ['ndjson', { outputFile: 'reports/events.ndjson' }],
+],</cb>
+  </section>
+</div>
+<p>A reporter is written <code>'name'</code>, <code>'name:outputFile'</code> or <code>['name', options]</code>. Paths are relative to the config folder.</p>
+
+<h2>The reporters</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Name</th><th>Output</th><th>Use it for</th></tr></thead>
+<tbody>
+<tr><td><code>console</code></td><td>Terminal. Pretty by default. <code>progress</code> is a compact style.</td><td>Local runs and CI logs. Options: <code>style</code>, <code>verbose</code>, <code>colors</code>.</td></tr>
+<tr><td><code>html</code></td><td>One self-contained file that works offline. Default <code>reports/report.html</code>.</td><td>People. See <a href="html-report.html">HTML report</a>. Options: <code>outputFile</code>, <code>title</code>, <code>logLevel</code>.</td></tr>
+<tr><td><code>junit</code></td><td>JUnit XML, one suite per feature. Default <code>reports/junit.xml</code>.</td><td>CI systems that show test results. A pass after a retry is a <code>flakyFailure</code>. A quarantined failure is skipped.</td></tr>
+<tr><td><code>cucumber-json</code> (or <code>json</code>)</td><td>Cucumber JSON. Default <code>reports/cucumber.json</code>.</td><td>Dashboards that read the Cucumber format.</td></tr>
+<tr><td><code>messages</code></td><td>Cucumber Messages as NDJSON. Default <code>reports/messages.ndjson</code>.</td><td>Tools that read Cucumber Messages. Scenarios generated from <code>@data</code> files are left out.</td></tr>
+<tr><td><code>ndjson</code></td><td>Every event as one JSON line. Default <code>reports/bddx.ndjson</code>.</td><td>The source of truth. Re-run failed tests, merge runs and build other reports from it. See <a href="reference-events.html">Event stream</a>.</td></tr>
+</tbody></table></div>
+
+<h2>Build reports after the fact</h2>
+<p>Because every report comes from the event stream, you can write the stream once and make reports from it later, or from several runs together:</p>
+<cb lang="bash">$ npx bddx -f ndjson:reports/events.ndjson
+$ npx bddx report reports/events.ndjson -f html:reports/report.html -f junit:reports/junit.xml
+$ npx bddx report run1.ndjson run2.ndjson -f html:reports/merged.html</cb>
+<p>When several files are merged, later runs win for each scenario. This is how <a href="sharding.html">sharded runs</a> and <a href="retries.html">re-runs of failures</a> become one report.</p>
+
+<h2>Attachments and logs</h2>
+<p>Whatever you attach in a step shows in the HTML report and in the NDJSON stream:</p>
+<cb>ctx.attach(JSON.stringify(response.data), 'application/json', 'response');
+ctx.log.info('created order 17');
+await ctx.log.image(screenshotBuffer);</cb>
+<p>The browser and API plugins attach screenshots and call logs on their own.</p>
+
+<h2>Run history</h2>
+<p>With <code>history: true</code> bddx keeps a record of each run in <code>.bddx/history</code>. The HTML report uses it for trends, and <code>npx bddx history</code> lists the flakiest and slowest scenarios.</p>

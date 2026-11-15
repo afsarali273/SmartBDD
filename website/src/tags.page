@@ -1,0 +1,45 @@
+title: Tags and selection
+section: Running
+desc: Every tag bddx understands, how to select scenarios by tag, name, file and line, and how to govern custom tags.
+lede: Tags are how you choose what runs and how it runs. Your own tags, such as @smoke, select scenarios. bddx's tags, such as @retry:2, change behaviour.
+---
+<h2>Select scenarios</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>You want</th><th>Command</th></tr></thead>
+<tbody>
+<tr><td>A tag expression</td><td><code>npx bddx -t "@smoke and not @wip"</code>. Operators: <code>and</code>, <code>or</code>, <code>not</code>, parentheses.</td></tr>
+<tr><td>A name pattern</td><td><code>npx bddx --name "refund|cancel"</code>. A regular expression on the scenario name.</td></tr>
+<tr><td>A file, folder or glob</td><td><code>npx bddx features/checkout</code>, <code>npx bddx "features/**/*.feature"</code></td></tr>
+<tr><td>One scenario by line</td><td><code>npx bddx features/checkout.feature:12</code></td></tr>
+<tr><td>What failed last time</td><td><code>npx bddx --rerun-failed reports/events.ndjson</code></td></tr>
+</tbody></table></div>
+<p>The config <code>tags</code> are combined with <code>-t</code> using <strong>and</strong>. When you select a scenario, the scenarios it depends on are added automatically. Add <code>--no-deps</code> to turn that off. <code>npx bddx list</code> shows what a selection would run.</p>
+
+<h2>Tags that change how a scenario runs</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Tag</th><th>Put it on</th><th>Meaning</th><th>Read</th></tr></thead>
+<tbody>
+<tr><td><code>@id:name</code></td><td>scenario</td><td>A stable id.</td><td><a href="feature-files.html">Feature files</a></td></tr>
+<tr><td><code>@group:name</code></td><td>feature, rule, scenario</td><td>Join a group.</td><td><a href="groups.html">Groups</a></td></tr>
+<tr><td><code>@dependsOn:id</code>, <code>@dependsOn:id:soft</code>, <code>@dependsOn:group:name</code></td><td>scenario</td><td>Wait for another scenario or group.</td><td><a href="dependencies.html">Dependencies</a></td></tr>
+<tr><td><code>@serial</code>, <code>@parallel</code></td><td>feature, rule</td><td>Run scenarios in file order, or opt out.</td><td><a href="serial-features.html">Serial features</a></td></tr>
+<tr><td><code>@lock:name</code>, <code>@exclusive</code>, <code>@priority:n</code></td><td>scenario</td><td>Mutual exclusion, run alone, start earlier.</td><td><a href="locks.html">Locks and priority</a></td></tr>
+<tr><td><code>@retry:N</code>, <code>@noRetry</code></td><td>scenario</td><td>Retry a failed scenario, or never.</td><td><a href="retries.html">Retries</a></td></tr>
+<tr><td><code>@quarantine</code></td><td>scenario</td><td>Run and report, never fail the build.</td><td><a href="retries.html">Retries</a></td></tr>
+<tr><td><code>@timeout:2m</code></td><td>scenario</td><td>Time budget for the scenario.</td><td><a href="retries.html">Retries</a></td></tr>
+<tr><td><code>@stepRetry:N</code>, <code>@stepDelay:2s</code>, <code>@stepTimeout:10s</code></td><td>scenario</td><td>Defaults for every step.</td><td><a href="retries.html">Retries</a></td></tr>
+<tr><td><code>@repeat:N</code>, <code>@retry:N</code>, <code>@delay:2s</code>, <code>@backoff:2</code>, <code>@timeout:10s</code>, <code>@concurrency:N</code></td><td>end of a step line</td><td>Repeat or retry one step.</td><td><a href="steps.html">Step definitions</a></td></tr>
+<tr><td><code>@data:file</code>, <code>@dataField:x=col</code></td><td>scenario, outline, examples</td><td>Rows from a file.</td><td><a href="data-files.html">Data files</a></td></tr>
+<tr><td><code>@reuseContext</code>, <code>@freshContext</code></td><td>feature, scenario</td><td>Playwright: share or not share the browser context.</td><td><a href="playwright.html">Playwright</a></td></tr>
+<tr><td><code>@reuseSession</code>, <code>@freshSession</code></td><td>feature, scenario</td><td>Selenium: share or not share the session.</td><td><a href="selenium.html">Selenium</a></td></tr>
+</tbody></table></div>
+
+<h2>Your own tags</h2>
+<p>Any other tag is yours. <code>@smoke</code>, <code>@ui</code> and <code>@api</code> select. A <code>@key:value</code> tag becomes metadata: <code>@owner:payments</code> is <code>ctx.scenario.meta.owner</code>.</p>
+
+<h2>Keep tags tidy</h2>
+<p>Typos in tags are silent: <code>@smoek</code> selects nothing. List the keys your project allows, and <code>bddx validate</code> reports the rest.</p>
+<cb title="bddx.config.ts">validation: {
+  allowedTagKeys: ['smoke', 'ui', 'api', 'owner', 'wip'],
+},</cb>
+<p>The tags in the table above are always allowed.</p>

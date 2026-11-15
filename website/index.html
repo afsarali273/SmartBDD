@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bddx: Gherkin specs, planned runs</title>
+  <meta name="description" content="bddx is a TypeScript automation framework with BDD-style specs, groups, dependencies, serial and parallel execution, retries, shards and plugins for Playwright, Selenium and axios.">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body class="landing" data-root="">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="docs/getting-started.html">Docs</a>
+      <a href="docs/getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="wrap hero">
+      <div>
+        <h1>Write it in Gherkin. Run it like a test plan.</h1>
+        <p class="lede">bddx is a TypeScript automation framework with BDD-style specs. Feature files describe the behaviour; groups, dependencies, serial and parallel lanes, retries and shards decide how the run goes.</p>
+        <div class="actions">
+          <a class="button primary" href="docs/getting-started.html">Get started</a>
+          <a class="button" href="https://github.com/afsarali273/SmartBDD">View the source</a>
+        </div>
+        <p class="install">Node.js 20.10 or newer. Browsers and APIs come from plugins, so the runner itself depends on none of them.</p>
+      </div>
+
+      <figure class="schedule" role="img" aria-label="A run of 139 scenarios on 4 workers. The health group runs first on worker 1 while the other workers wait. Then theInternet and sauceDemo run on worker 1, jsonPlaceholder, todoMvc and mixed share workers 2 to 4.">
+        <div class="schedule-bar">
+          <span class="prompt">npx bddx run --pool process -w 4</span>
+          <span class="result">139 passed</span>
+        </div>
+        <div class="lanes" aria-hidden="true">
+          <div class="lane"><b>w1</b>
+            <div class="track">
+              <span class="gate"></span>
+              <span class="block" style="--from:1;--to:5;--c:var(--g1)">health</span>
+              <span class="block" style="--from:5;--to:13;--c:var(--g2)">theInternet</span>
+              <span class="block" style="--from:13;--to:25;--c:var(--g3)">sauceDemo (serial)</span>
+            </div>
+          </div>
+          <div class="lane"><b>w2</b>
+            <div class="track">
+              <span class="block wait" style="--from:1;--to:5"></span>
+              <span class="block" style="--from:5;--to:12;--c:var(--g2)">theInternet</span>
+              <span class="block" style="--from:12;--to:18;--c:var(--g5)">todoMvc</span>
+              <span class="block" style="--from:18;--to:24;--c:var(--g6)">mixed</span>
+            </div>
+          </div>
+          <div class="lane"><b>w3</b>
+            <div class="track">
+              <span class="block wait" style="--from:1;--to:5"></span>
+              <span class="block" style="--from:5;--to:10;--c:var(--g4)">jsonPlaceholder</span>
+              <span class="block" style="--from:10;--to:16;--c:var(--g5)">todoMvc</span>
+              <span class="block" style="--from:16;--to:22;--c:var(--g6)">mixed</span>
+            </div>
+          </div>
+          <div class="lane"><b>w4</b>
+            <div class="track">
+              <span class="block wait" style="--from:1;--to:5"></span>
+              <span class="block" style="--from:5;--to:11;--c:var(--g4)">jsonPlaceholder</span>
+              <span class="block" style="--from:11;--to:20;--c:var(--g4)">jsonPlaceholder</span>
+            </div>
+          </div>
+        </div>
+        <div class="axis" aria-hidden="true"><span></span><span class="axis-scale"><span>0 s</span><span>health passed, the rest starts</span><span>56 s</span></span></div>
+        <ul class="schedule-legend" aria-hidden="true">
+          <li><i style="--c:var(--g1)"></i><span><strong>health</strong> serial, runs first</span></li>
+          <li><i style="--c:var(--g2)"></i><span><strong>theInternet</strong> parallel, 2 workers</span></li>
+          <li><i style="--c:var(--g3)"></i><span><strong>sauceDemo</strong> serial, holds a lock</span></li>
+          <li><i style="--c:var(--g4)"></i><span><strong>jsonPlaceholder</strong> parallel, 3 workers</span></li>
+          <li><i style="--c:var(--g5)"></i><span><strong>todoMvc</strong> parallel, 2 workers</span></li>
+          <li><i style="--c:var(--g6)"></i><span><strong>mixed</strong> UI and API together</span></li>
+        </ul>
+      </figure>
+    </section>
+
+    <section class="band sunken">
+      <div class="wrap">
+        <h2>Gherkin on top, a scheduler underneath</h2>
+        <p class="band-intro">Feature files stay readable for the whole team. How they run lives in one config file: which scenarios belong together, what waits for what, and how many run at once.</p>
+        <div class="split">
+          <figure>
+            <div class="code-block" data-title="features/checkout.feature"><pre><code class="lang-gherkin">@ui @saucedemo @serial
+Feature: Checkout
+  The scenarios run in file order, in one browser session.
+
+  @smoke @id:sign-in
+  Scenario: Sign in
+    Given the SauceDemo login page is open
+    When I sign in as "standard_user"
+    Then the inventory page is displayed
+
+  @dependsOn:sign-in
+  Scenario: Fill the cart
+    When I add these products to the cart:
+      | product             |
+      | Sauce Labs Backpack |
+    Then the cart badge is 1</code></pre></div>
+            <figcaption>The spec: plain Gherkin, plus tags that bddx understands.</figcaption>
+          </figure>
+          <figure>
+            <div class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">import { defineConfig } from '@bddx/cli';
+import { playwright } from '@bddx/playwright';
+
+export default defineConfig({
+  plugins: [playwright({ browser: 'chromium' })],
+  workers: 4,
+  pool: 'process',
+  retry: { scenario: 1, on: ['TimeoutError'] },
+  groups: {
+    health: { match: '@health', mode: 'serial', priority: -100 },
+    sauceDemo: {
+      match: '@saucedemo',
+      mode: 'serial',
+      dependsOn: ['health'],
+      locks: ['saucedemo-standard-user'],
+    },
+    api: {
+      match: '@api',
+      mode: 'parallel',
+      workers: 3,
+      dependsOn: ['health'],
+    },
+  },
+});</code></pre></div>
+            <figcaption>The plan: groups, dependencies, locks and retries. Any value can be changed from the command line with <code>--set</code>.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="wrap">
+        <h2>What bddx adds</h2>
+        <p class="band-intro">Everything a Cucumber-style runner does, and the orchestration that TestNG users expect.</p>
+        <dl class="capabilities">
+          <div><dt>Groups</dt><dd>Collect scenarios by tag and run each group serial, parallel or exclusive, with its own worker cap and time budget.</dd></div>
+          <div><dt>Dependencies</dt><dd>Between groups (<code>dependsOn</code>) or scenarios (<code>@dependsOn:id</code>). When a dependency fails, what needs it is skipped, not failed.</dd></div>
+          <div><dt>Serial features</dt><dd><code>@serial</code> runs one feature's scenarios in file order while other features keep running in parallel.</dd></div>
+          <div><dt>Retries in layers</dt><dd>For the run, a group or one scenario (<code>@retry:2</code>), with delay, backoff, error filters and flaky reporting.</dd></div>
+          <div><dt>Fixtures</dt><dd>Steps ask for what they need, <code>({ page })</code> or <code>inject('api')</code>. Set up once per scenario, feature or worker, torn down after.</dd></div>
+          <div><dt>Plugins</dt><dd>Playwright, Selenium and axios are separate packages. bddx itself has no dependency on any of them.</dd></div>
+          <div><dt>Processes and shards</dt><dd><code>--pool process</code> isolates workers; <code>--shard 2/4</code> splits a run across CI machines without breaking groups or dependencies.</dd></div>
+          <div><dt>Reports</dt><dd>Console, an HTML report with a worker timeline and run history, JUnit, Cucumber JSON and Messages, and a raw event stream.</dd></div>
+          <div><dt>Debugging</dt><dd><code>--debug</code> pauses at a failing step, <code>--watch</code> reruns on save, and <code>bddx plan</code> shows the schedule before anything runs.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="band sunken" id="how-it-fits">
+      <div class="wrap">
+        <h2>How the pieces fit</h2>
+        <p class="band-intro">The runner reads your feature files and config, builds a plan, and hands each scenario to a worker. Plugins give the steps their browsers and HTTP clients.</p>
+        <figure class="placeholder" data-kind="ai" style="--ratio: 21 / 9">
+          <div class="placeholder-frame"><p class="placeholder-what">Architecture diagram: feature files and config go into the bddx runner (planner, scheduler, workers); plugins supply Playwright, Selenium and axios; reports come out.</p></div>
+          <figcaption>
+            <p class="placeholder-how">Generate with an AI diagram or image tool. Prompt:</p>
+            <pre class="prompt">Clean flat technical architecture diagram, left to right, white background, thin dark navy (#171A33) lines, one accent colour deep cyan (#0B7A86), font IBM Plex Sans. Left column: two document icons labelled "Feature files (.feature)" and "bddx.config.ts". Middle: one large rounded box labelled "bddx runner" containing three stacked boxes "Planner (groups, dependencies, tags)", "Scheduler (serial / parallel lanes, locks, retries)", "Workers w1 … w4 (inline or separate processes)". Below the runner, three small boxes connected upward with dashed lines, labelled "@bddx/playwright", "@bddx/selenium", "@bddx/axios", with a caption "plugins: browsers and HTTP clients as fixtures". Right column: output icons labelled "HTML report", "JUnit XML", "Cucumber JSON", "NDJSON events". Arrows: inputs into runner, runner to outputs. No 3D, no gradients, no people, generous spacing, 21:9 aspect ratio.</pre>
+            <p class="placeholder-file">Save as <code>assets/img/architecture.png</code> and replace this placeholder with an <code>&lt;img&gt;</code>.</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="band" id="plugins">
+      <div class="wrap">
+        <h2>Plugins for browsers and APIs</h2>
+        <p class="band-intro">Install the plugin next to the tool it wraps, add it to <code>plugins</code> in the config, and its fixtures are available in every step. Several plugins work together in one scenario.</p>
+        <table class="plugin-table">
+          <tbody>
+            <tr>
+              <th scope="row">Playwright<small>@bddx/playwright</small></th>
+              <td>A browser per worker, a fresh context and page per scenario, <code>expect</code> assertions, screenshots, traces and video on failure, device emulation, and one shared session for a <code>@serial</code> feature.</td>
+            </tr>
+            <tr>
+              <th scope="row">Selenium<small>@bddx/selenium</small></th>
+              <td>A WebDriver session per scenario in Chrome, Firefox, Edge or Safari, <code>open</code> and <code>wait</code> helpers, Selenium Grid through <code>-D server=…</code>, screenshots on failure.</td>
+            </tr>
+            <tr>
+              <th scope="row">axios<small>@bddx/axios</small></th>
+              <td>An API client with base URL, headers and auth from the config. Status codes are data, so a 404 is an assertion, not an exception. The calls of a failed scenario are attached to the report, secrets masked.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="band sunken">
+      <div class="wrap">
+        <h2>What a run leaves behind</h2>
+        <p class="band-intro">Every run writes an HTML report with the worker timeline, failures with screenshots and API call logs, and the history of earlier runs.</p>
+        <figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 10">
+          <div class="placeholder-frame"><p class="placeholder-what">The HTML report of the Playwright showcase, timeline view.</p></div>
+          <figcaption>
+            <p class="placeholder-how">Capture this yourself:</p>
+            <p>Run <code>npm test</code> in <code>examples/playwright-showcase</code>, open <code>reports/report.html</code>, switch to the timeline view and take a screenshot of the browser window at about 1600 × 1000 pixels, light theme, with the four worker lanes visible.</p>
+            <p class="placeholder-file">Save as <code>assets/img/report-timeline.png</code>.</p>
+          </figcaption>
+        </figure>
+        <p><a class="button primary" href="docs/getting-started.html">Get started</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>bddx is a working name. These docs cover the TypeScript version.</p>
+      <nav aria-label="Footer">
+        <a href="docs/getting-started.html">Getting started</a>
+        <a href="docs/components.html">Docs theme</a>
+        <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="assets/js/nav.js"></script>
+  <script src="assets/js/site.js"></script>
+</body>
+</html>

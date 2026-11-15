@@ -1,0 +1,45 @@
+title: Data tables and doc strings
+section: Writing tests
+desc: Pass tables and blocks of text to a step, and read them as rows, objects or key-value pairs.
+lede: A step can take one table or one block of text after it. The step receives it as its last argument.
+---
+<h2>Data tables</h2>
+<cb lang="gherkin">Given the catalogue:
+  | product | price |
+  | apple   | 0.50  |
+  | pear    | 0.75  |</cb>
+<cb title="steps/basket.steps.ts">import { Given, type DataTable } from '@bddx/runtime';
+
+Given('the catalogue:', (ctx, table: DataTable) => {
+  const prices = Object.fromEntries(
+    table.hashes().map((row) => [row['product'], Math.round(Number(row['price']) * 100)]),
+  );
+  ctx.state.set('prices', prices);
+});</cb>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Returns</th></tr></thead>
+<tbody>
+<tr><td><code>raw()</code></td><td>All rows as arrays of strings, including the header row.</td></tr>
+<tr><td><code>header()</code></td><td>The first row.</td></tr>
+<tr><td><code>rows()</code></td><td>All rows except the header.</td></tr>
+<tr><td><code>hashes()</code></td><td>One object per row, keyed by the header. The usual choice.</td></tr>
+<tr><td><code>rowsHash()</code></td><td>A two-column table as one object: first column keys, second column values.</td></tr>
+<tr><td><code>transpose()</code></td><td>A new table with rows and columns swapped.</td></tr>
+</tbody></table></div>
+
+<h2>Doc strings</h2>
+<cb lang="gherkin">When I post this order:
+  """json
+  { "product": "apple", "qty": 2 }
+  """</cb>
+<cb>import { When, type DocString } from '@bddx/runtime';
+
+When('I post this order:', async (ctx, body: DocString) => {
+  const order = JSON.parse(body.content);
+  // body.mediaType is "json"
+});</cb>
+<p>A <code>DocString</code> is a string with a <code>content</code> and an optional <code>mediaType</code>.</p>
+
+<h2>Tables in reports</h2>
+<p>The HTML report shows step tables and doc strings as tables, tinted by the status of the step.</p>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>For many rows, or rows that change often, keep them in a file and use <code>@data:</code>. See <a href="data-files.html">Data files</a>.</p></aside>

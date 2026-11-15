@@ -1,0 +1,84 @@
+title: CLI options
+section: Reference
+desc: Every bddx command and option, with defaults and the config option each one overrides.
+lede: The complete list, as printed by bddx --help for version 0.1.0. Options apply to every command that makes sense for them.
+---
+<h2>Commands</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>bddx [run] [paths...]</code></td><td>Run scenarios. Paths are files, folders, globs or <code>file:line</code>.</td></tr>
+<tr><td><code>bddx list [paths...]</code></td><td>List scenarios with ids and tags, without running.</td></tr>
+<tr><td><code>bddx snippets [paths...]</code></td><td>Print code for every undefined step.</td></tr>
+<tr><td><code>bddx validate [paths...]</code></td><td>Static checks on specs, plan, steps and hooks.</td></tr>
+<tr><td><code>bddx plan [paths...]</code></td><td>Show groups, dependencies and locks. Options <code>--plan-format text|json|mermaid</code> and <code>--explain &lt;scenario id&gt;</code>.</td></tr>
+<tr><td><code>bddx report &lt;events.ndjson...&gt;</code></td><td>Build reports from event files. Several files are merged and later runs win.</td></tr>
+<tr><td><code>bddx history [--top n]</code></td><td>The flakiest and slowest scenarios. Needs <code>history: true</code>.</td></tr>
+<tr><td><code>bddx docs [paths...]</code></td><td>Living documentation. Options <code>-o</code>, <code>--results</code> (repeatable), <code>--title</code>.</td></tr>
+</tbody></table></div>
+
+<h2>Selection</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>-t</code>, <code>--tags &lt;expr&gt;</code></td><td>Tag expression, such as <code>"@smoke and not @wip"</code>. Combined with the config <code>tags</code> using and.</td></tr>
+<tr><td><code>--name &lt;regex&gt;</code></td><td>Only scenarios whose name matches.</td></tr>
+<tr><td><code>--no-deps</code></td><td>Do not add the dependencies of selected scenarios.</td></tr>
+<tr><td><code>--rerun-failed &lt;file&gt;</code></td><td>Only scenarios that did not pass in an events file, plus their dependencies.</td></tr>
+<tr><td><code>--shard &lt;i/n&gt;</code></td><td>Run shard i of n. Also works with <code>plan</code>. See <a href="sharding.html">Sharding in CI</a>.</td></tr>
+</tbody></table></div>
+
+<h2>Configuration</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>-c</code>, <code>--config &lt;file&gt;</code></td><td>Config file. Default: <code>bddx.config.{ts,mts,js,mjs,json}</code> in the current folder.</td></tr>
+<tr><td><code>-p</code>, <code>--profile &lt;name&gt;</code></td><td>Use a profile from the config.</td></tr>
+<tr><td><code>-s</code>, <code>--set &lt;path=value&gt;</code></td><td>Override any config value. Repeatable. See <a href="profiles.html">Profiles and --set</a>.</td></tr>
+<tr><td><code>-D</code>, <code>--define k=v</code></td><td>Set <code>ctx.params.k</code>. Repeatable.</td></tr>
+</tbody></table></div>
+
+<h2>Running</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>Config</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>-w</code>, <code>--workers &lt;n&gt;</code></td><td><code>workers</code></td><td>Scenarios running at once. Default 1.</td></tr>
+<tr><td><code>--pool &lt;kind&gt;</code></td><td><code>pool</code></td><td><code>inline</code> (default) or <code>process</code>.</td></tr>
+<tr><td><code>--timeout &lt;ms&gt;</code></td><td><code>stepTimeoutMs</code></td><td>Default step and hook timeout.</td></tr>
+<tr><td><code>--run-timeout &lt;dur&gt;</code></td><td><code>runTimeout</code></td><td>Time budget for the run, such as <code>30m</code>.</td></tr>
+<tr><td><code>--fail-fast</code></td><td><code>failFast</code></td><td>Stop after the first failed scenario.</td></tr>
+<tr><td><code>--no-strict</code></td><td><code>strict</code></td><td>Pending and undefined steps do not fail the run.</td></tr>
+<tr><td><code>--dry-run</code></td><td></td><td>Match steps and report undefined ones. Run nothing.</td></tr>
+</tbody></table></div>
+
+<h2>Retries</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>Config</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>-r</code>, <code>--retry &lt;n&gt;</code></td><td><code>retry.scenario</code></td><td>Retry failed scenarios up to n times.</td></tr>
+<tr><td><code>--worker-crash-retry &lt;n&gt;</code></td><td><code>retry.workerCrash</code></td><td>Retry on a fresh process after a worker crash.</td></tr>
+<tr><td><code>--fail-on-flaky</code></td><td><code>retry.failOnFlaky</code></td><td>Fail the run when a scenario passed only after a retry.</td></tr>
+</tbody></table></div>
+
+<h2>Output</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>-f</code>, <code>--format &lt;spec&gt;</code></td><td>Add a reporter: <code>console</code>, <code>progress</code>, <code>html[:file]</code>, <code>junit[:file]</code>, <code>ndjson[:file]</code>, <code>cucumber-json[:file]</code>, <code>messages[:file]</code>. Repeatable.</td></tr>
+<tr><td><code>--log-level &lt;level&gt;</code></td><td><code>debug</code>, <code>info</code> (default), <code>warn</code>, <code>error</code> or <code>silent</code>.</td></tr>
+<tr><td><code>--fail-on-warnings</code></td><td>With <code>validate</code>: exit 1 when warnings are found.</td></tr>
+</tbody></table></div>
+
+<h2>Developing</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>--watch</code></td><td>Run, then re-run on file changes. See <a href="debugging.html">Debugging and watch mode</a>.</td></tr>
+<tr><td><code>--debug</code></td><td>Pause after a failing step.</td></tr>
+<tr><td><code>--debug-step</code></td><td>Pause before every step.</td></tr>
+<tr><td><code>--inspect [port]</code></td><td>Open the Node inspector, default port 9229, and wait for a debugger.</td></tr>
+<tr><td><code>-h</code>, <code>--help</code>; <code>-v</code>, <code>--version</code></td><td>Help and version.</td></tr>
+</tbody></table></div>
+
+<h2>Exit codes</h2>
+<p><code>0</code> passed, <code>1</code> failed, <code>2</code> usage, configuration or parse error, <code>130</code> interrupted.</p>

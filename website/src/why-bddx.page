@@ -1,0 +1,52 @@
+title: Why bddx
+section: Introduction
+desc: What bddx is, who it is for, and what it adds to Gherkin specs: orchestration, resilience, plugins and reports.
+lede: bddx is a test runner for automation suites written as Gherkin specs. It keeps the readable feature files and adds the control that large UI and API suites need: what runs in parallel, what must run in order, and what to do when a test fails.
+---
+<h2>What bddx is</h2>
+<p>You write scenarios in <code>.feature</code> files and the steps behind them in TypeScript. bddx finds the scenarios, builds a schedule, runs them on workers, retries what should be retried and writes the reports.</p>
+<p>It is an automation framework with BDD-style specs, not a methodology. Use the specs to share what a test does with people who do not read code. Use the runner to get a fast, stable suite.</p>
+<aside class="callout note"><p class="callout-title">Not tied to a browser library</p><p>bddx core depends on no browser or HTTP library. Playwright, Selenium and axios are plugins that your project installs. See <a href="plugins.html">How plugins work</a>.</p></aside>
+
+<h2>What you get</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>You need to</th><th>bddx gives you</th><th>Read</th></tr></thead>
+<tbody>
+<tr><td>Run independent tests side by side</td><td><code>workers</code> and an optional process pool: one Node.js process per worker.</td><td><a href="process-pool.html">Worker processes</a></td></tr>
+<tr><td>Keep a journey in order inside a parallel run</td><td><code>@serial</code> on a feature. Other features keep running.</td><td><a href="serial-features.html">Serial features</a></td></tr>
+<tr><td>Run setup first, reports last</td><td>Groups with <code>dependsOn</code>, plus <code>@dependsOn</code> between scenarios.</td><td><a href="groups.html">Groups</a>, <a href="dependencies.html">Dependencies</a></td></tr>
+<tr><td>Stop two tests from using the same database at once</td><td><code>@lock:name</code>, <code>@exclusive</code> and <code>@priority:n</code>.</td><td><a href="locks.html">Locks and priority</a></td></tr>
+<tr><td>Survive a flaky environment without hiding it</td><td>Scenario, group and run retries. A pass after a failure is reported as flaky. <code>@quarantine</code> keeps a known-bad test visible without failing the build.</td><td><a href="retries.html">Retries and flaky tests</a></td></tr>
+<tr><td>Split a suite across CI machines</td><td><code>--shard i/n</code>, balanced by recorded duration.</td><td><a href="sharding.html">Sharding in CI</a></td></tr>
+<tr><td>Drive test data from files</td><td><code>@data:</code> with CSV, TSV, JSON, YAML and Excel.</td><td><a href="data-files.html">Data files</a></td></tr>
+<tr><td>Use a real browser or API client</td><td>Plugins that expose the full Playwright, Selenium or axios API as fixtures.</td><td><a href="playwright.html">Playwright</a>, <a href="selenium.html">Selenium</a>, <a href="axios.html">axios</a></td></tr>
+<tr><td>Show results to a team</td><td>A single-file HTML report with a timeline, dependency graph and history. JUnit XML, Cucumber JSON and an NDJSON event stream.</td><td><a href="reporters.html">Reporters</a></td></tr>
+</tbody></table></div>
+
+<h2>One run, parallel and serial together</h2>
+<p>Most suites mix work that can run side by side with work that cannot. A login test and a catalogue test are independent. A checkout journey is not: add to basket, pay, see the receipt. bddx plans both in one run, so you do not split the suite into separate jobs.</p>
+<figure class="placeholder" data-kind="ai" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">A run schedule: four worker lanes, a setup group first, then parallel and serial groups, then reports last.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Generate with an AI diagram or image tool. Prompt:</p>
+    <pre class="prompt">Flat technical schedule chart, white background, font IBM Plex Sans. Time runs left to right. Four horizontal lanes labelled w1, w2, w3, w4. First column of blocks: one block "setup (serial)" on lane w1 only, other lanes empty and labelled "waiting". Second column: block group "checkout (parallel, 3 workers)" spread across w1, w2, w3, and a block "payments (serial)" on w4 with a small lock icon labelled "payments-db". Last column: one block "reports (runs after checkout and payments)" on w1. Use deep cyan (#0B7A86) for setup, teal (#2F8F6B) for checkout, amber (#B7791F) for payments, slate (#5B6385) for reports. Thin navy (#171A33) text, no gradients, no shadows.</pre>
+    <p class="placeholder-file">Save as <code>assets/img/why-schedule.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>Who it is for</h2>
+<ul>
+  <li>Teams with a UI and API suite that has outgrown one sequential run.</li>
+  <li>QA engineers who write specs and want developers to share the step code.</li>
+  <li>Teams moving from Cucumber.js who want orchestration without writing their own scripts. See <a href="from-cucumber.html">Coming from Cucumber.js</a>.</li>
+</ul>
+
+<h2>When another tool fits better</h2>
+<ul>
+  <li>You write unit tests. Use your language's unit test runner.</li>
+  <li>You only need a handful of browser tests and nobody reads the specs. A plain Playwright Test project is simpler.</li>
+  <li>You need a stable 1.0 today. bddx is at version 0.1 and is not on npm yet. You build it from the repository. See <a href="getting-started.html">Getting started</a>.</li>
+</ul>
+
+<h2>Current state</h2>
+<p>The TypeScript runtime, CLI, reporters and the Playwright, Selenium and axios plugins are working. A Java port is planned and will use the same configuration, event stream and conformance tests. Planned work, such as a VS Code extension, is listed in <code>docs/STATUS.md</code> in the repository.</p>

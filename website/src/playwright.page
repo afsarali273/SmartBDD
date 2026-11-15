@@ -1,0 +1,127 @@
+title: Playwright
+section: Plugins
+desc: Use Playwright from bddx steps: fixtures, options, assertions, extra contexts, remote browsers and one session for a whole feature.
+lede: bddx stays the runner, with groups, retries, shards and reports. The plugin hands you Playwright itself, so everything Playwright can do in a script is available in a step.
+---
+<h2>Install</h2>
+<div class="tabs" data-group="os">
+  <section data-tab="macos" data-label="macOS">
+<cb lang="bash">$ npm i -D file:../SmartBDD/plugins/playwright playwright @playwright/test
+$ npx playwright install chromium</cb>
+  </section>
+  <section data-tab="windows" data-label="Windows">
+<cb lang="powershell">PS> npm i -D file:../SmartBDD/plugins/playwright playwright @playwright/test
+PS> npx playwright install chromium</cb>
+  </section>
+  <section data-tab="linux" data-label="Linux">
+<cb lang="bash">$ npm i -D file:../SmartBDD/plugins/playwright playwright @playwright/test
+$ npx playwright install --with-deps chromium</cb>
+  </section>
+</div>
+<p><code>@playwright/test</code> is optional. It is only needed for the <code>expect</code> fixture. Use the same version as <code>playwright</code>.</p>
+
+<h2>Configure</h2>
+<cb title="bddx.config.ts">import { defineConfig } from '@bddx/cli';
+import { playwright } from '@bddx/playwright';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  plugins: [
+    playwright({
+      browser: 'chromium',
+      screenshot: 'only-on-failure',
+      trace: 'only-on-failure',
+      testIdAttribute: 'data-test',
+      expectTimeoutMs: 7000,
+      context: { baseURL: 'https://www.saucedemo.com', viewport: { width: 1280, height: 800 } },
+    }),
+  ],
+});</cb>
+<p>Add <code>import '@bddx/playwright';</code> to one support file so <code>ctx.page</code>, <code>({ page })</code> and <code>inject('page')</code> are typed.</p>
+
+<h2>Use it in steps</h2>
+<cb title="steps/login.steps.ts">import { Given, When, Then } from '@bddx/runtime';
+
+Given('I open {string}', ({ page }, path: string) => page.goto(path));
+
+When('I sign in as {string}', async ({ page }, user: string) => {
+  await page.getByPlaceholder('Username').fill(user);
+  await page.getByRole('button', { name: 'Login' }).click();
+});
+
+Then('the heading is {string}', async ({ page, expect }, text: string) => {
+  await expect(page.locator('h1')).toHaveText(text); // retries until expectTimeoutMs
+});</cb>
+<p>Everything in Playwright works as documented: auto-waiting, <code>getByRole</code>, <code>route</code>, <code>waitForResponse</code>, <code>storageState</code>, HAR, permissions, geolocation, locale and timezone.</p>
+<aside class="callout warning"><p class="callout-title">Not available</p><p>Anything that needs Playwright's own test runner: <code>toHaveScreenshot</code> and snapshot matching, <code>test.step</code> and <code>test.info()</code>. Use the <code>screenshot</code> option or <code>ctx.attach</code> instead.</p></aside>
+
+<h2>Fixtures</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Name</th><th>Scope</th><th>What you get</th></tr></thead>
+<tbody>
+<tr><td><code>playwright</code></td><td>worker</td><td>The <code>playwright</code> module: devices, selectors.</td></tr>
+<tr><td><code>browser</code></td><td>worker</td><td>Launched on first use. One per worker process. With the inline pool, concurrent scenarios share it.</td></tr>
+<tr><td><code>context</code></td><td>scenario</td><td>A fresh <code>BrowserContext</code> per attempt: isolated cookies and storage. Trace and video belong to it.</td></tr>
+<tr><td><code>page</code></td><td>scenario</td><td>A page in that context. A screenshot is taken at the end.</td></tr>
+<tr><td><code>request</code></td><td>scenario</td><td>An <code>APIRequestContext</code> for API calls. Never starts a browser.</td></tr>
+<tr><td><code>expect</code></td><td>worker</td><td>Playwright's retrying <code>expect</code>. Needs <code>@playwright/test</code>.</td></tr>
+<tr><td><code>newContext</code></td><td>scenario</td><td><code>await newContext({ locale: 'de-DE' })</code> gives a second isolated context, closed after the scenario.</td></tr>
+</tbody></table></div>
+<p>A scenario that names none of these starts no browser. A retry gets a fresh context and page.</p>
+
+<h2>Options</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>browser</code></td><td><code>'chromium'</code></td><td><code>'chromium'</code>, <code>'firefox'</code> or <code>'webkit'</code>. <code>-D browser=firefox</code> overrides.</td></tr>
+<tr><td><code>channel</code></td><td></td><td>Chromium only: <code>'chrome'</code>, <code>'msedge'</code>.</td></tr>
+<tr><td><code>headless</code></td><td><code>true</code></td><td><code>-D headed=true</code> shows the browser.</td></tr>
+<tr><td><code>launch</code></td><td></td><td>Extra <code>launch()</code> options: <code>slowMo</code>, <code>args</code>, <code>proxy</code>.</td></tr>
+<tr><td><code>context</code></td><td></td><td><code>newContext()</code> options: <code>baseURL</code>, <code>viewport</code>, <code>locale</code>, <code>storageState</code>. <code>-D baseURL=</code> overrides <code>baseURL</code>.</td></tr>
+<tr><td><code>request</code></td><td></td><td><code>request.newContext()</code> options. <code>baseURL</code> defaults to the context's.</td></tr>
+<tr><td><code>device</code></td><td></td><td>A Playwright device name such as <code>'Pixel 7'</code>. <code>-D device=</code> overrides. <code>context</code> options win over it.</td></tr>
+<tr><td><code>testIdAttribute</code></td><td><code>'data-testid'</code></td><td>Attribute used by <code>getByTestId</code>.</td></tr>
+<tr><td><code>connect</code></td><td></td><td><code>{ wsEndpoint, options }</code>: connect to a running Playwright server instead of launching.</td></tr>
+<tr><td><code>cdpUrl</code></td><td></td><td>Chromium only: connect over CDP to a running browser, such as <code>'http://localhost:9222'</code>.</td></tr>
+<tr><td><code>expectTimeoutMs</code></td><td><code>5000</code></td><td>Timeout of <code>expect</code> assertions.</td></tr>
+<tr><td><code>actionTimeoutMs</code>, <code>navigationTimeoutMs</code></td><td>Playwright's</td><td>Default timeouts of the context.</td></tr>
+<tr><td><code>screenshot</code></td><td><code>'only-on-failure'</code></td><td><code>'off'</code>, <code>'on'</code> or <code>'only-on-failure'</code>. Full page, attached to the report.</td></tr>
+<tr><td><code>trace</code></td><td><code>'off'</code></td><td>Same values. Saved in <code>outputDir/traces</code>. Open with <code>npx playwright show-trace file.zip</code>.</td></tr>
+<tr><td><code>video</code></td><td><code>'off'</code></td><td>Same values. Saved in <code>outputDir/videos</code>.</td></tr>
+<tr><td><code>outputDir</code></td><td><code>'reports/playwright'</code></td><td>Relative to the working directory.</td></tr>
+<tr><td><code>reuseContext</code></td><td><code>'off'</code></td><td><code>'serial'</code> makes every <code>@serial</code> feature share one context and page.</td></tr>
+</tbody></table></div>
+
+<h2>One browser session for a whole feature</h2>
+<cb lang="gherkin">@serial @reuseContext
+Feature: Checkout journey
+  Scenario: Log in
+  Scenario: Add to basket     # same page, still logged in
+  Scenario: Pay               # same page</cb>
+<ul>
+  <li><code>@reuseContext</code> needs <code>@serial</code> on the feature. Without it you get an error.</li>
+  <li><code>@freshContext</code> on a scenario opts out.</li>
+  <li>The browser stays open. The context and page close when the feature ends.</li>
+  <li>Screenshots are still taken per failed scenario. The trace and video cover the whole feature.</li>
+  <li>If you select one scenario of the feature, it runs alone on a new session and does not replay the earlier ones.</li>
+</ul>
+
+<h2>Run it</h2>
+<cb lang="bash">$ npx bddx run -D browser=firefox
+$ npx bddx run -D headed=true --workers 1
+$ npx bddx run --pool process --workers 4</cb>
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">The HTML report of the Playwright showcase with a failed scenario and its attached screenshot.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>In <code>examples/playwright-showcase</code> make one scenario fail on purpose (change an expected text), run <code>npx bddx run -t @saucedemo</code>, open the HTML report, expand the failed scenario so the error and the screenshot are visible. Light theme, about 1400 px wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/playwright-failure-report.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>Examples</h2>
+<ul>
+  <li><code>plugins/playwright/example</code> runs offline with a local server.</li>
+  <li><code>examples/playwright-showcase</code> has 139 scenarios against public sites, with page objects, groups, API steps and mixed UI and API.</li>
+</ul>

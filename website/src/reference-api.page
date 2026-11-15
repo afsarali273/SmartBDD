@@ -1,0 +1,98 @@
+title: Runtime API
+section: Reference
+desc: The functions and context members that @bddx/runtime exports for step files, hooks, fixtures and plugins.
+lede: Everything you import from @bddx/runtime in step files. The config helper defineConfig comes from @bddx/cli.
+---
+<h2>Steps</h2>
+<div class="signature">
+  <code>Given(pattern, fn)</code> · <code>Given(pattern, options, fn)</code>
+  <p><code>When</code>, <code>Then</code> and <code>Step</code> are the same function. The keyword does not affect matching.</p>
+  <dl class="params">
+    <dt>pattern</dt><dd>A Cucumber Expression string or a regular expression.</dd>
+    <dt>fn</dt><dd><code>(ctx, ...captures) =&gt; unknown</code>. The first parameter may be destructured to request fixtures. A trailing data table or doc string is the last argument.</dd>
+    <dt>options</dt><dd><code>{ tags, timeoutMs, retry, concurrent }</code>. See <a href="steps.html">Step definitions</a>.</dd>
+  </dl>
+</div>
+<p>Used without a function, <code>Given(pattern, options?)</code> is a method decorator inside a <code>@Steps()</code> class.</p>
+
+<div class="signature">
+  <code>defineParameterType({ name, regexp, transformer })</code>
+  <p>Adds a type for use as <code>{name}</code> in patterns. See <a href="parameter-types.html">Parameter types</a>.</p>
+</div>
+
+<h2>Hooks</h2>
+<div class="signature">
+  <code>Before(fn)</code> · <code>Before(tags | options, fn)</code>
+  <p>The same shape for every hook. A string is a tag expression. Options: <code>name</code>, <code>tags</code>, <code>order</code>, <code>alwaysRun</code>, <code>timeoutMs</code>, and <code>eachAttempt</code> for step hooks.</p>
+</div>
+<div class="table-wrap"><table>
+<thead><tr><th>Function</th><th>Receives</th></tr></thead>
+<tbody>
+<tr><td><code>BeforeAll</code>, <code>AfterAll</code> (<code>BeforeSuite</code>, <code>AfterSuite</code>)</td><td>run context</td></tr>
+<tr><td><code>BeforeWorker</code>, <code>AfterWorker</code></td><td>run context</td></tr>
+<tr><td><code>BeforeGroup</code>, <code>AfterGroup</code></td><td>group context: adds <code>group</code> (store) and <code>groupName</code></td></tr>
+<tr><td><code>BeforeFeature</code>, <code>AfterFeature</code>, <code>BeforeRule</code>, <code>AfterRule</code></td><td>feature context: adds <code>feature</code> (store), <code>featureInfo</code> and <code>rule</code></td></tr>
+<tr><td><code>Before</code>, <code>After</code> (<code>BeforeScenario</code>, <code>AfterScenario</code>), <code>BeforeStep</code>, <code>AfterStep</code></td><td>step context</td></tr>
+</tbody></table></div>
+
+<h2>Fixtures and plugins</h2>
+<div class="signature">
+  <code>defineFixture(name, setup, options?)</code>
+  <p>Registers a named value created on first use. See <a href="fixtures.html">Fixtures and inject()</a>.</p>
+  <dl class="params">
+    <dt>setup</dt><dd><code>(ctx) =&gt; value | Promise&lt;value&gt;</code>. Destructure other fixtures from <code>ctx</code>.</dd>
+    <dt>options.scope</dt><dd><code>'scenario'</code> (default), <code>'feature'</code> or <code>'worker'</code>.</dd>
+    <dt>options.teardown</dt><dd><code>(value, { status, error, ctx }) =&gt; void | Promise</code>.</dd>
+    <dt>options.afterScenario</dt><dd>Feature and worker scope only. Called after each scenario that used the fixture.</dd>
+  </dl>
+</div>
+<div class="signature">
+  <code>definePlugin({ name, setup(options) })</code>
+  <p>Returns the plugin object. Export it as the default export of a plugin file. See <a href="writing-plugins.html">Writing your own plugin</a>.</p>
+</div>
+<div class="signature">
+  <code>inject(token)</code>
+  <p>Used in a field or constructor of a class. <code>token</code> is a class (one instance per scenario), a fixture name, or <code>CONTEXT</code>. See <a href="class-steps.html">Class steps and page objects</a>.</p>
+</div>
+<p><code>@Steps()</code> marks a class that holds step and hook methods. <code>CONTEXT</code> is the token for the step context.</p>
+
+<h2>Run-wide settings</h2>
+<div class="signature">
+  <code>setRetryAnalyzer(fn | undefined)</code>
+  <p>Decide for each failure whether to retry, like TestNG's retry analyzer. <code>fn({ scenario, attempt, maxRetries, error })</code> returns <code>true</code> to retry or <code>false</code> to stop. It is called only when a retry is otherwise allowed.</p>
+</div>
+<div class="signature">
+  <code>setDefaultTimeout(ms)</code>
+  <p>The default timeout for steps and hooks, like <code>stepTimeoutMs</code> in the config.</p>
+</div>
+
+<h2>The context</h2>
+<p>These are available on the first parameter of steps and hooks, depending on the level. See <a href="steps.html">Step definitions</a> for what each is for.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Available in</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>run</code></td><td>every level</td><td>A store for this process.</td></tr>
+<tr><td><code>params</code></td><td>every level</td><td>Read-only strings from <code>params</code> and <code>-D</code>.</td></tr>
+<tr><td><code>signal</code></td><td>every level</td><td>An <code>AbortSignal</code> that aborts on cancel or timeout.</td></tr>
+<tr><td><code>log</code></td><td>every level</td><td>Callable (info). <code>log.debug</code>, <code>log.info</code>, <code>log.warn</code>, <code>log.error</code> and <code>log.image</code>.</td></tr>
+<tr><td><code>attach(body, mediaType?, name?)</code></td><td>every level</td><td>Attach text or bytes to the report.</td></tr>
+<tr><td><code>defer(fn)</code></td><td>every level</td><td>Cleanup for the current scope, last in first out, even after failures.</td></tr>
+<tr><td><code>fixture(name)</code></td><td>every level</td><td>Create or get a fixture.</td></tr>
+<tr><td><code>feature</code>, <code>featureInfo</code>, <code>rule</code></td><td>feature, rule, scenario, step</td><td>Feature store, and information about the feature and rule.</td></tr>
+<tr><td><code>scenario</code></td><td>scenario, step</td><td>Id, name, tags, <code>meta</code>, example row, attempt.</td></tr>
+<tr><td><code>state</code></td><td>scenario, step</td><td>Store, fresh for each scenario attempt.</td></tr>
+<tr><td><code>groups</code></td><td>scenario, step</td><td>Stores of the groups the scenario belongs to.</td></tr>
+<tr><td><code>export(key, value)</code>, <code>from(id)</code></td><td>scenario, step</td><td>Share plain data with dependent scenarios. <code>from(id)</code> returns <code>get</code>, <code>has</code> and <code>keys</code>.</td></tr>
+<tr><td><code>soft</code></td><td>scenario, step</td><td><code>check(condition, message)</code>, <code>run(fn)</code>, <code>failures</code>.</td></tr>
+<tr><td><code>step</code></td><td>step, step hooks</td><td>The current step, with its attempt number.</td></tr>
+<tr><td><code>pending(reason?)</code>, <code>skip(reason?)</code></td><td>scenario, step</td><td>Mark the step pending, or skip the rest of the scenario.</td></tr>
+</tbody></table></div>
+
+<h2>Stores</h2>
+<p><code>ctx.state</code>, <code>ctx.feature</code>, <code>ctx.run</code> and the group stores have <code>get&lt;T&gt;(key)</code>, <code>set(key, value)</code> and <code>getOrSet(key, factory)</code>.</p>
+
+<h2>Data</h2>
+<p><code>DataTable</code>: <code>raw()</code>, <code>header()</code>, <code>rows()</code>, <code>hashes()</code>, <code>rowsHash()</code>, <code>transpose()</code>. <code>DocString</code>: a string with <code>content</code> and <code>mediaType</code>. See <a href="data-tables.html">Data tables and doc strings</a>.</p>
+
+<h2>Programmatic use</h2>
+<p>The CLI is a thin shell around <code>runBddx()</code> from <code>@bddx/cli</code>, so you can start a run from your own script. See <code>packages/cli/src/run.ts</code> in the repository.</p>

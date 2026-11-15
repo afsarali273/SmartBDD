@@ -1,0 +1,93 @@
+title: Selenium
+section: Plugins
+desc: Use Selenium WebDriver from bddx steps: fixtures, options, waits, remote grids and one browser session for a whole feature.
+lede: The Selenium plugin works the same way as the Playwright plugin. Steps ask for a driver, and bddx starts a fresh browser session for each scenario and quits it afterwards.
+---
+<h2>Install</h2>
+<div class="tabs" data-group="os">
+  <section data-tab="macos" data-label="macOS">
+<cb lang="bash">$ npm i -D file:../SmartBDD/plugins/selenium selenium-webdriver</cb>
+  </section>
+  <section data-tab="windows" data-label="Windows">
+<cb lang="powershell">PS> npm i -D file:../SmartBDD/plugins/selenium selenium-webdriver</cb>
+  </section>
+  <section data-tab="linux" data-label="Linux">
+<cb lang="bash">$ npm i -D file:../SmartBDD/plugins/selenium selenium-webdriver</cb>
+  </section>
+</div>
+<p>Selenium Manager comes with <code>selenium-webdriver</code> and finds or downloads the driver for Chrome, Firefox and Edge. You need the browser itself installed. <code>selenium-webdriver</code> 4.x needs a recent Node.js: use Node 22 or 24.</p>
+
+<h2>Configure</h2>
+<cb title="bddx.config.ts">import { defineConfig } from '@bddx/cli';
+import { selenium } from '@bddx/selenium';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  workers: 3,
+  pool: 'process',
+  plugins: [
+    selenium({ browser: 'chrome', baseURL: 'https://shop.example.com', screenshot: 'only-on-failure' }),
+  ],
+});</cb>
+<p>Add <code>import '@bddx/selenium';</code> to one support file so <code>ctx.driver</code>, <code>({ driver })</code> and <code>inject('driver')</code> are typed.</p>
+
+<h2>Use it in steps</h2>
+<cb title="steps/login.steps.ts">import { Given, When, Then } from '@bddx/runtime';
+
+Given('I open {string}', ({ open }, path: string) => open(path));
+
+When('I log in as {string}', async ({ driver, selenium: { By } }, user: string) => {
+  await driver.findElement(By.css('#user')).sendKeys(user);
+  await driver.findElement(By.css('button[type=submit]')).click();
+});
+
+Then('I see the heading', async ({ wait, selenium: { By, until } }) => {
+  await wait(until.elementLocated(By.css('h1')));
+});</cb>
+<aside class="callout warning"><p class="callout-title">Warning</p><p>A helper that reads <code>ctx.selenium</code> or <code>ctx.driver</code> inside its body is not seen by bddx. Destructure the fixture in the step and pass it on, or use <code>await ctx.fixture('selenium')</code>.</p></aside>
+
+<h2>Fixtures</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Name</th><th>Scope</th><th>What you get</th></tr></thead>
+<tbody>
+<tr><td><code>selenium</code></td><td>worker</td><td>The <code>selenium-webdriver</code> module: <code>By</code>, <code>Key</code>, <code>until</code>, <code>Capabilities</code>.</td></tr>
+<tr><td><code>driver</code></td><td>scenario</td><td>A fresh <code>WebDriver</code>, one browser session per scenario attempt. A screenshot is taken at the end, then the session quits.</td></tr>
+<tr><td><code>open</code></td><td>scenario</td><td><code>await open('/login')</code>: <code>driver.get()</code> relative to <code>baseURL</code>.</td></tr>
+<tr><td><code>wait</code></td><td>scenario</td><td><code>await wait(until...)</code>: <code>driver.wait()</code> with <code>waitTimeoutMs</code> as the default timeout. Returns the element for element conditions.</td></tr>
+<tr><td><code>newDriver</code></td><td>scenario</td><td><code>await newDriver({ browser: 'firefox' })</code> gives a second session, for another user or browser. It quits after the scenario.</td></tr>
+</tbody></table></div>
+<p>Selenium has no browser and context split, so every session is a real browser process. A scenario that uses none of these starts nothing.</p>
+
+<h2>Options</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>browser</code></td><td><code>'chrome'</code></td><td><code>'chrome'</code>, <code>'firefox'</code>, <code>'edge'</code> or <code>'safari'</code>. <code>-D browser=firefox</code> overrides.</td></tr>
+<tr><td><code>headless</code></td><td><code>true</code></td><td><code>-D headed=true</code> shows the browser. Safari has no headless mode.</td></tr>
+<tr><td><code>args</code></td><td></td><td>Extra browser arguments such as <code>'--lang=de'</code> or <code>'--incognito'</code>.</td></tr>
+<tr><td><code>capabilities</code></td><td></td><td>Extra W3C capabilities. Vendor <code>args</code> are combined with the ones above.</td></tr>
+<tr><td><code>server</code></td><td></td><td>A remote endpoint such as a Selenium Grid or a cloud provider: <code>'http://grid:4444'</code>. <code>-D server=</code> overrides.</td></tr>
+<tr><td><code>baseURL</code></td><td></td><td>Base of <code>open('/path')</code>. <code>-D baseURL=</code> overrides.</td></tr>
+<tr><td><code>windowSize</code></td><td></td><td><code>{ width, height }</code>.</td></tr>
+<tr><td><code>implicitWaitMs</code>, <code>pageLoadTimeoutMs</code>, <code>scriptTimeoutMs</code></td><td>Selenium's</td><td>Session timeouts.</td></tr>
+<tr><td><code>waitTimeoutMs</code></td><td><code>10000</code></td><td>Default timeout of <code>wait(...)</code>.</td></tr>
+<tr><td><code>screenshot</code></td><td><code>'only-on-failure'</code></td><td><code>'off'</code>, <code>'on'</code> or <code>'only-on-failure'</code>.</td></tr>
+<tr><td><code>reuseSession</code></td><td><code>'off'</code></td><td><code>'serial'</code> makes every <code>@serial</code> feature share one browser session.</td></tr>
+</tbody></table></div>
+<p>The plugin uses your project's own copy of <code>selenium-webdriver</code>, so <code>import { until } from 'selenium-webdriver'</code> in your code and the driver share one copy. Selenium checks wait conditions with <code>instanceof</code>, which fails with two copies.</p>
+
+<h2>One browser session for a whole feature</h2>
+<cb lang="gherkin">@serial @reuseSession
+Feature: Checkout journey
+  Scenario: Log in            # starts the browser
+  Scenario: Add to basket     # same session, still logged in
+  Scenario: Pay</cb>
+<p><code>@reuseSession</code> needs <code>@serial</code> on the feature. <code>@freshSession</code> on a scenario opts out. The browser quits when the feature ends.</p>
+
+<h2>Run it</h2>
+<cb lang="bash">$ npx bddx run -D browser=firefox
+$ npx bddx run -D headed=true --workers 1
+$ npx bddx run -D server=http://grid:4444 --pool process --workers 4</cb>
+<aside class="callout note"><p class="callout-title">What has been verified</p><p>The showcase's 33 scenarios pass on Firefox. Chrome, Edge, Safari and a remote Grid have not been run yet.</p></aside>
+<p>See <code>plugins/selenium/example</code> for an offline project and <code>examples/selenium-showcase</code> for 33 scenarios against public sites.</p>

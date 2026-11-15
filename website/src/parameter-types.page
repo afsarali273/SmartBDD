@@ -1,0 +1,45 @@
+title: Parameter types
+section: Writing tests
+desc: Turn text in a step into your own types, such as money or dates, with defineParameterType.
+lede: A parameter type gives a name to a pattern and converts the matched text into a value. The step then receives a number, a date or an object, not a string.
+---
+<h2>Define one</h2>
+<cb title="steps/basket.steps.ts">import { defineParameterType, Then } from '@bddx/runtime';
+
+// {money} matches "1.00" and gives the step a number of cents.
+defineParameterType({
+  name: 'money',
+  regexp: /\d+\.\d{2}/,
+  transformer: (s) => Math.round(Number(s) * 100),
+});
+
+Then('the basket total is {money}', (ctx, expectedCents: number) => {
+  // expectedCents is 100 for "1.00"
+});</cb>
+<p>This is the <code>{money}</code> type from <code>examples/basic</code>.</p>
+
+<h2>Options</h2>
+<div class="signature">
+  <code>defineParameterType({ name, regexp, transformer })</code>
+  <p>Registers a type that steps can use as <code>{name}</code>.</p>
+  <dl class="params">
+    <dt>name</dt><dd>The word used in curly braces.</dd>
+    <dt>regexp</dt><dd>What the text must look like. Use a single regular expression, or an array of them.</dd>
+    <dt>transformer</dt><dd>Converts the matched text into the value the step receives. Receives one string per capture group.</dd>
+  </dl>
+</div>
+
+<h2>Another example: a user role</h2>
+<cb>type Role = 'admin' | 'viewer';
+
+defineParameterType({
+  name: 'role',
+  regexp: /admin|viewer/,
+  transformer: (s): Role => s as Role,
+});
+
+Given('I am signed in as {role}', async ({ page }, role: Role) => {
+  // role is 'admin' or 'viewer'; any other word does not match this step
+});</cb>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>A step that does not match gets reported as undefined with the text of the step, which tells you at once when a value is not in your type.</p></aside>
+<aside class="callout note"><p class="callout-title">Validate</p><p><code>npx bddx validate</code> checks steps without running parameter transformers, so it does not run your conversion code.</p></aside>

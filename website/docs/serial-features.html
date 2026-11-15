@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Serial features | bddx</title>
+  <meta name="description" content="Run the scenarios of one feature in order while the rest of the suite stays parallel, and share one browser session across them.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Orchestration</p>
+        <h1>Serial features</h1>
+        <p class="lede">Mark a feature @serial when its scenarios form a journey. They run one after another in file order, while other features keep running beside it.</p>
+
+<h2 id="the-basics">The basics</h2>
+        <figure class="code-block" data-title="features/checkout-journey.feature"><pre><code class="lang-gherkin">@serial
+Feature: Checkout journey
+  Scenario: Add to basket
+    ...
+  Scenario: Pay
+    ...
+  Scenario: See the receipt
+    ...</code></pre></figure>
+        <p>"Pay" starts when "Add to basket" has finished, whether it passed or not. "See the receipt" follows "Pay". Other features and other groups run in parallel as usual, so two serial features run side by side, each in its own order.</p>
+
+        <h2 id="where-you-can-put-it">Where you can put it</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Where</th><th>Effect</th></tr></thead>
+        <tbody>
+        <tr><td><code>@serial</code> on a Feature</td><td>Every scenario waits for the previous one.</td></tr>
+        <tr><td><code>@serial</code> on a Rule</td><td>Only that rule's scenarios are chained.</td></tr>
+        <tr><td>Config <code>featureMode: 'serial'</code></td><td>Every feature is serial. Add <code>@parallel</code> to a feature to opt it out.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="rules-worth-knowing">Rules worth knowing</h2>
+        <ul>
+          <li>The order is file order. Outline and data rows run in row order.</li>
+          <li>A failed scenario does not stop the next one. The chain orders; it does not depend. Add <code>@dependsOn:id</code> when a scenario really needs an earlier one to pass.</li>
+          <li>Groups, locks, priorities, retries and <code>@exclusive</code> still apply. A scenario retry finishes before the next scenario starts.</li>
+          <li>If you select a subset with <code>-t</code>, <code>--name</code>, <code>file:line</code> or <code>--rerun-failed</code>, only the selected scenarios are chained.</li>
+          <li><code>--shard</code> keeps a serial feature on one shard.</li>
+        </ul>
+        <aside class="callout danger"><p class="callout-title">Errors, exit code 2</p><p><code>@serial</code> on a single scenario, <code>@serial</code> together with <code>@parallel</code>, and a scenario that depends on a later scenario in the same serial feature.</p></aside>
+
+        <h2 id="share-one-browser-session">Share one browser session</h2>
+        <p>Serial features are the natural place to log in once and keep the page open. The browser plugins support this with a tag on the feature.</p>
+        <div class="tabs" data-group="plugin">
+          <section data-tab="playwright" data-label="Playwright">
+        <figure class="code-block"><pre><code class="lang-gherkin">@serial @reuseContext
+Feature: Checkout journey</code></pre></figure>
+        <p>Use <code>@freshContext</code> on a scenario to leave the shared context.</p>
+          </section>
+          <section data-tab="selenium" data-label="Selenium">
+        <figure class="code-block"><pre><code class="lang-gherkin">@serial @reuseSession
+Feature: Checkout journey</code></pre></figure>
+        <p>Use <code>@freshSession</code> on a scenario to leave the shared session.</p>
+          </section>
+        </div>
+        <p>With <code>pool: 'process'</code> every scenario of a serial feature runs in the same worker process, so the session survives between them. Under the hood this uses a feature-scoped fixture. See <a href="fixtures.html">Fixtures and inject()</a>.</p>
+        <aside class="callout warning"><p class="callout-title">Warning</p><p>A retried scenario continues on the shared page, not on a fresh one. Start each scenario from a known URL.</p></aside>
+
+        <h2 id="see-the-chain-in-the-plan">See the chain in the plan</h2>
+        <p><code>npx bddx plan</code> shows each chained scenario with <code>&lt;- previous (feature runs in file order)</code>.</p>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

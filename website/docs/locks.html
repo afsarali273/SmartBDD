@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Locks and priority | bddx</title>
+  <meta name="description" content="Stop tests that share a resource from running at the same time, run one test alone, and decide what starts first.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Orchestration</p>
+        <h1>Locks and priority</h1>
+        <p class="lede">Parallel runs break when two tests change the same thing at once. Locks keep those tests apart. Priority decides what starts first when there is a choice.</p>
+
+<h2 id="locks">Locks</h2>
+        <p>Give the scenarios that share a resource the same lock name. Scenarios with the same lock never run at the same time, even on different workers. Scenarios with different locks, or none, are not affected.</p>
+        <figure class="code-block"><pre><code class="lang-gherkin">@lock:payments-db
+Scenario: Refund an order
+  ...
+
+@lock:payments-db
+Scenario: Close the day
+  ...</code></pre></figure>
+        <p>To lock a whole group, list the lock in the config. Every member holds it.</p>
+        <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">groups: {
+  payments: { mode: 'serial', locks: ['payments-db'] },
+},</code></pre></figure>
+        <aside class="callout tip"><p class="callout-title">Tip</p><p>Name locks after the thing they protect, such as <code>payments-db</code> or <code>admin-user</code>, not after the test.</p></aside>
+
+        <h2 id="exclusive">Exclusive</h2>
+        <p>Use <code>@exclusive</code> for a scenario that must run with nothing else running, such as one that restarts a service. A group with <code>mode: 'exclusive'</code> does the same for its members.</p>
+        <figure class="code-block"><pre><code class="lang-gherkin">@exclusive
+Scenario: Restart the API gateway
+  ...</code></pre></figure>
+
+        <h2 id="priority">Priority</h2>
+        <p>When more scenarios are ready than workers are free, bddx starts the one with the lowest priority number first. The default is 0.</p>
+        <figure class="code-block"><pre><code class="lang-gherkin">@priority:-5
+Scenario: Smoke test the home page</code></pre></figure>
+        <ul>
+          <li>A scenario's <code>@priority</code> wins over its group's <code>priority</code>.</li>
+          <li>With several groups, the lowest group priority applies.</li>
+          <li>Priority never breaks a dependency. A scenario still waits for what it depends on.</li>
+        </ul>
+        <p>Use a negative priority to put slow or important scenarios first, so they do not start last and stretch the run.</p>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

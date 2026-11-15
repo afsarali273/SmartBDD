@@ -1,0 +1,56 @@
+title: UI and API in one scenario
+section: Plugins
+desc: Combine browser and API steps in one scenario by installing two plugins and passing values through the scenario state.
+lede: A scenario can create data through the API and check it in the browser, or the other way round. Install both plugins and ask for the fixtures you need in each step.
+---
+<h2>Set up both plugins</h2>
+<cb title="bddx.config.ts">import { defineConfig } from '@bddx/cli';
+import { axios } from '@bddx/axios';
+import { playwright } from '@bddx/playwright';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  plugins: [
+    axios({ baseURL: 'https://jsonplaceholder.typicode.com', attach: 'only-on-failure' }),
+    playwright({ browser: 'chromium', screenshot: 'only-on-failure' }),
+  ],
+});</cb>
+<p>The fixture names do not clash. Use <code>page</code>, <code>request</code> or <code>driver</code> for the browser and <code>api</code> for HTTP. Use Selenium instead of Playwright the same way.</p>
+
+<h2>A scenario that uses both</h2>
+<cb lang="gherkin" title="features/ui-and-api.feature">Scenario: A post title fetched through the API becomes a todo in the browser
+  When I fetch the title of post 1 through the API
+  And I add that title as a todo in TodoMVC
+  Then TodoMVC lists that title</cb>
+<cb title="steps/mixed.steps.ts">import { strict as assert } from 'node:assert';
+import { When, Then } from '@bddx/runtime';
+
+When('I fetch the title of post {int} through the API', async ({ api, state }, id: number) => {
+  const response = await api.get(`/posts/${id}`);
+  assert.equal(response.status, 200);
+  state.set('title', (response.data as { title: string }).title);
+});
+
+When('I add that title as a todo in TodoMVC', async ({ page, state }) => {
+  await page.goto('https://demo.playwright.dev/todomvc');
+  await page.getByPlaceholder('What needs to be done?').fill(state.get<string>('title'));
+  await page.keyboard.press('Enter');
+});
+
+Then('TodoMVC lists that title', async ({ page, state, expect }) => {
+  await expect(page.getByTestId('todo-title')).toHaveText(state.get<string>('title'));
+});</cb>
+<p>Values travel between the two kinds of step in the scenario state, <code>ctx.state</code>. The browser is started only in the steps that ask for <code>page</code>. A scenario that only uses <code>api</code> never opens one.</p>
+
+<h2>Useful combinations</h2>
+<ul>
+  <li><strong>Data from the API, check in the UI.</strong> Create records quickly through the API, then check how the page shows them.</li>
+  <li><strong>The UI and the API agree.</strong> Request a page through <code>api</code> and open it in the browser, then compare the status.</li>
+  <li><strong>Sessions across both.</strong> Sign in through the API and put the token in the browser's <code>storageState</code> or a cookie.</li>
+  <li><strong>Clean up through the API.</strong> Delete test data with <code>ctx.defer</code> after a UI test.</li>
+</ul>
+
+<h2>Keep them apart when you can</h2>
+<p>A scenario that is only about the API should not need a browser, and a UI scenario should not depend on API details. Use mixed scenarios for the places where the two meet. Put API-only scenarios and UI-only scenarios in separate groups so they run at the speed that suits each.</p>
+<p>The complete working version is <code>examples/playwright-showcase/features/mixed/ui-and-api.feature</code>, with 8 mixed scenarios.</p>

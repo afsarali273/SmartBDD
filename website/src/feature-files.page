@@ -1,0 +1,57 @@
+title: Feature files
+section: Writing tests
+desc: The Gherkin you can use in bddx feature files: scenarios, outlines, rules, backgrounds, tags and ids.
+lede: A feature file describes behaviour in plain language. Each scenario becomes one test. bddx reads standard Gherkin, so existing files work.
+---
+<h2>The shape of a file</h2>
+<cb lang="gherkin" title="features/basket.feature">@shop
+Feature: Shopping basket
+  Customers add products to a basket and pay the total.
+
+  Background:
+    Given an empty basket
+
+  @smoke @id:add-single
+  Scenario: Add a single product
+    When I add 2 "apple"
+    Then the basket total is 1.00
+
+  Scenario Outline: Totals for different quantities
+    When I add <qty> "<product>"
+    Then the basket total is <total>
+
+    Examples:
+      | qty | product | total |
+      | 1   | apple   | 0.50  |
+      | 4   | pear    | 3.00  |</cb>
+<ul>
+  <li><strong>Feature</strong> groups scenarios. The text under it is a description for readers.</li>
+  <li><strong>Background</strong> steps run before every scenario in the feature.</li>
+  <li><strong>Scenario</strong> is one test. <strong>Scenario Outline</strong> with <strong>Examples</strong> is one test per row.</li>
+  <li><strong>Rule</strong> groups scenarios inside a feature. Tags on a rule apply to its scenarios.</li>
+</ul>
+<aside class="callout note"><p class="callout-title">Other languages</p><p>Set <code>language</code> in the config to write keywords in another language. Markdown files with Gherkin inside (<code>.md</code>) also work as specs.</p></aside>
+
+<h2>Tags</h2>
+<p>Tags start with <code>@</code> and sit on the line above a Feature, Rule, Scenario or Examples block. A scenario also has the tags of its feature and rule. Tags that look like <code>@key:value</code> are kept as metadata.</p>
+<cb lang="gherkin">@owner:payments @smoke
+Scenario: Pay by card</cb>
+<p>A step can read it as <code>ctx.scenario.meta.owner</code>. Select scenarios with a tag expression:</p>
+<cb lang="bash">$ npx bddx run -t "@smoke and not @wip"</cb>
+<p>See <a href="tags.html">Tags and selection</a> for the list of tags bddx understands.</p>
+
+<h2>Scenario ids</h2>
+<p>Every scenario gets a stable id. Dependencies, reruns and merged reports use it.</p>
+<ul>
+  <li>With <code>@id:add-single</code> the id is <code>add-single</code>.</li>
+  <li>Without it the id is the file and the scenario name, such as <code>features/basket.feature::add-a-single-product</code>.</li>
+  <li>Outline rows add the row number: <code>add-single[1]</code>.</li>
+</ul>
+<p>Outline ids use the name before the placeholders are filled in, so changing the example values does not change the ids. List ids with <code>npx bddx list</code>.</p>
+
+<h2>Data tables and doc strings</h2>
+<p>Steps can take a table or a block of text. See <a href="data-tables.html">Data tables and doc strings</a>.</p>
+
+<h2>Check your files</h2>
+<cb lang="bash">$ npx bddx validate</cb>
+<p>This parses every spec and reports syntax errors, duplicate ids, undefined or ambiguous steps and unused step definitions, without running anything.</p>

@@ -1,0 +1,61 @@
+title: Dependencies
+section: Orchestration
+desc: Make one scenario or group wait for another, share data between them, and see why a scenario was skipped.
+lede: Use a dependency when one test really needs another to have finished first, for example a scenario that uses an account created by an earlier one.
+---
+<h2>Depend on a scenario</h2>
+<p>Give the scenario you depend on an id with <code>@id:</code>, then point at it with <code>@dependsOn:</code>.</p>
+<cb lang="gherkin" title="features/orders.feature">Feature: Orders
+  @id:create-order
+  Scenario: Create an order
+    When I create an order for "apple"
+    Then I get an order number
+
+  @dependsOn:create-order
+  Scenario: Cancel the order
+    When I cancel the order I just created
+    Then the order status is "cancelled"</cb>
+<p>"Cancel the order" starts only after "Create an order" has passed. If it failed or was skipped, "Cancel the order" is skipped too, and so is anything that depends on it.</p>
+<aside class="callout note"><p class="callout-title">Ids</p><p>Without <code>@id:</code> a scenario gets an id from its file and its name, such as <code>features/orders.feature::create-an-order</code>. Add <code>@id:</code> when other scenarios point at it, so renaming the scenario does not break them. For an outline row the id is <code>name[1]</code>, <code>name[2]</code> and so on. Pointing at <code>name</code> depends on every row.</p></aside>
+
+<h2>Soft dependencies</h2>
+<p>A soft dependency orders the scenarios but does not skip anything when the earlier one fails.</p>
+<cb lang="gherkin">@dependsOn:create-order:soft
+Scenario: Clean up test orders</cb>
+
+<h2>Depend on a group</h2>
+<cb lang="gherkin">@dependsOn:group:setup
+Scenario: Browse the catalogue</cb>
+<p>This scenario waits for every member of the <code>setup</code> group. You can also set <code>dependsOn</code> on the group in the config, which gives every member the same dependency. See <a href="groups.html">Groups</a>.</p>
+
+<h2>What happens when a dependency fails</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Dependency kind</th><th>When the dependency does not pass</th></tr></thead>
+<tbody>
+<tr><td><code>@dependsOn:id</code></td><td>The scenario is skipped. The skip cascades to anything that depends on it.</td></tr>
+<tr><td><code>@dependsOn:id:soft</code></td><td>The scenario still runs.</td></tr>
+<tr><td>Group <code>dependsOn</code></td><td>The default is <code>onDependencyFailure: 'skip'</code>. Set <code>'run'</code> to run anyway, as a reporting group would.</td></tr>
+</tbody></table></div>
+
+<h2>Run one scenario and what it needs</h2>
+<p>When you select a scenario with <code>-t</code>, a name, or <code>file:line</code>, bddx adds the scenarios it depends on, even from other files. Add <code>--no-deps</code> to run only what you selected.</p>
+<cb lang="bash">$ npx bddx run features/orders.feature:9
+$ npx bddx run features/orders.feature:9 --no-deps</cb>
+
+<h2>Pass data to a later scenario</h2>
+<p>A scenario can export a value, and a scenario that depends on it can read it. The value is copied, and it works across worker processes.</p>
+<cb title="steps/orders.steps.ts">import { When, Given } from '@bddx/runtime';
+
+When('I create an order for {string}', async (ctx, product: string) => {
+  const orderId = await createOrder(product);
+  ctx.export('orderId', orderId);
+});
+
+Given('the order created earlier', (ctx) => {
+  const orderId = ctx.from('create-order').get<string>('orderId');
+  ctx.state.set('orderId', orderId);
+});</cb>
+<aside class="callout warning"><p class="callout-title">Add the dependency</p><p><code>ctx.from(id)</code> throws if that scenario has not finished. If you see that error, add <code>@dependsOn:</code> for it.</p></aside>
+
+<h2>Check the plan</h2>
+<p>bddx reports unknown ids, unknown groups and cycles such as <code>a -&gt; c -&gt; b -&gt; a</code> before anything runs, and exits with code 2. <code>npx bddx plan --plan-format mermaid</code> prints the dependency graph as a Mermaid diagram you can paste into a wiki. The HTML report shows the same graph after a run.</p>

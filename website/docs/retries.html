@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Retries and flaky tests | bddx</title>
+  <meta name="description" content="Retry scenarios, groups and whole runs, see which tests are flaky, and quarantine a known-bad test.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Orchestration</p>
+        <h1>Retries and flaky tests</h1>
+        <p class="lede">A retry gives a failed test another chance. bddx still tells you it failed first, so retries do not hide flaky tests.</p>
+
+<h2 id="retry-a-scenario">Retry a scenario</h2>
+        <div class="tabs" data-group="retry">
+          <section data-tab="tag" data-label="Tag">
+        <figure class="code-block"><pre><code class="lang-gherkin">@retry:2
+Scenario: Load the dashboard</code></pre></figure>
+        <p>Use <code>@noRetry</code> to turn retries off for a scenario when the config enables them.</p>
+          </section>
+          <section data-tab="config" data-label="Config">
+        <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">retry: {
+  scenario: 1,
+  delay: '200ms',
+  backoff: 2,
+  on: ['ServiceUnavailable', '/timed out/'],
+},</code></pre></figure>
+        <p><code>on</code> limits retries to errors whose name or message matches. Without it every failure is retried.</p>
+          </section>
+          <section data-tab="cli" data-label="Command line">
+        <figure class="code-block"><pre><code class="lang-bash">$ npx bddx run --retry 1</code></pre></figure>
+          </section>
+        </div>
+        <p>Each attempt starts with fresh scenario state and fresh scenario-scoped fixtures. The report shows every attempt.</p>
+
+        <h2 id="flaky-not-just-passed">Flaky, not just passed</h2>
+        <p>A scenario that fails and then passes on a retry is reported as <span class="state flaky">flaky</span>. The run passes, unless you ask otherwise:</p>
+        <figure class="code-block"><pre><code class="lang-bash">$ npx bddx run --retry 2 --fail-on-flaky</code></pre></figure>
+        <p>With <code>history: true</code> in the config, bddx records every run in <code>.bddx/history</code> and gives each scenario a flakiness score: the share of runs whose outcome flipped or that passed only after a retry. A scenario that always fails scores 0, because it is broken, not flaky.</p>
+        <figure class="code-block"><pre><code class="lang-bash">$ npx bddx history --top 10</code></pre></figure>
+
+        <h2 id="quarantine">Quarantine</h2>
+        <p>Add <code>@quarantine</code> to a test you know is broken but want to keep running. It runs and is reported, but a failure never fails the build. JUnit XML shows a quarantined failure as skipped.</p>
+        <figure class="code-block"><pre><code class="lang-gherkin">@quarantine @owner:ann
+Scenario: Export to PDF</code></pre></figure>
+
+        <h2 id="retry-a-group">Retry a group</h2>
+        <p>When members depend on each other, retrying one is not enough. Retry the group instead.</p>
+        <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">groups: {
+  warmup: { mode: 'serial', retry: 1, retryMembers: 'failed' },
+},</code></pre></figure>
+        <p><code>retryMembers</code> is <code>'all'</code> or <code>'failed'</code>. Groups that depend on this one wait until it settles.</p>
+
+        <h2 id="retry-a-worker-crash">Retry a worker crash</h2>
+        <p>If a worker process crashes, only its scenario fails and the lane starts again. To retry the scenario on a fresh process, set <code>retry.workerCrash</code> or pass <code>--worker-crash-retry 1</code>.</p>
+
+        <h2 id="re-run-only-what-failed">Re-run only what failed</h2>
+        <figure class="code-block"><pre><code class="lang-bash">$ npx bddx run -f ndjson:reports/events.ndjson
+$ npx bddx run --rerun-failed reports/events.ndjson -f ndjson:reports/events2.ndjson
+$ npx bddx report reports/events.ndjson reports/events2.ndjson -f html:reports/merged.html</code></pre></figure>
+        <p>The first run writes the event stream. The second runs only scenarios that did not pass, plus what they depend on. <code>bddx report</code> merges the files, and later runs win.</p>
+
+        <h2 id="retry-a-step">Retry a step</h2>
+        <p>For one slow call, retry the step instead of the scenario. Put the tags at the end of the step line.</p>
+        <figure class="code-block"><pre><code class="lang-gherkin">Then the report is ready @retry:5 @delay:2s @timeout:30s</code></pre></figure>
+        <p>Defaults for every step of a scenario are <code>@stepRetry:N</code>, <code>@stepDelay:2s</code> and <code>@stepTimeout:10s</code>.</p>
+
+        <h2 id="time-budgets">Time budgets</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Budget</th><th>Set with</th></tr></thead>
+        <tbody>
+        <tr><td>One step or hook</td><td><code>stepTimeoutMs</code> or <code>--timeout</code></td></tr>
+        <tr><td>One scenario</td><td><code>@timeout:2m</code> or <code>scenarioTimeout</code></td></tr>
+        <tr><td>One group</td><td><code>groups.name.timeout</code></td></tr>
+        <tr><td>The whole run</td><td><code>runTimeout</code> or <code>--run-timeout 30m</code></td></tr>
+        </tbody></table></div>
+        <p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd> once and bddx stops, cleans up, writes the reports and exits with code 130.</p>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

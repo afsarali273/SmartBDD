@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started | bddx</title>
+  <meta name="description" content="Install bddx on macOS, Windows or Linux, create a project and run your first feature file.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html" aria-current="page">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Introduction</p>
+        <h1>Getting started</h1>
+        <p class="lede">Install Node.js, build bddx, create a project and run a feature file. About fifteen minutes on macOS, Windows or Linux.</p>
+
+        <h2 id="requirements">System requirements</h2>
+        <dl class="requirements">
+          <dt>Node.js</dt>
+          <dd>20.10 or newer for bddx itself. Use <strong>Node.js 22 or 24 (LTS)</strong> if you plan to use the Selenium plugin: current <code>selenium-webdriver</code> releases require Node.js 22 or newer.</dd>
+          <dt>npm</dt>
+          <dd>Comes with Node.js. Check with <code>npm -v</code>.</dd>
+          <dt>Git</dt>
+          <dd>To get the bddx source. bddx is not published to npm yet, so projects use it from a local clone.</dd>
+          <dt>Operating system</dt>
+          <dd>macOS, Windows 10 or 11, or Linux. bddx is plain Node.js and does not depend on the operating system. Browser plugins add their own requirements, listed below.</dd>
+          <dt>Editor</dt>
+          <dd>Any. VS Code works well with the TypeScript and Cucumber (Gherkin) extensions.</dd>
+        </dl>
+
+        <h3 id="browser-requirements">Extra requirements for browser testing</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Plugin</th><th>macOS</th><th>Windows</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>@bddx/playwright</code></td>
+                <td>macOS 14 or later</td>
+                <td>Windows 11, Windows Server 2019 or later, or WSL</td>
+                <td>Node.js 20, 22 or 24. Browsers are downloaded with <code>npx playwright install</code>. These are <a href="https://playwright.dev/docs/intro#system-requirements">Playwright's requirements</a>.</td>
+              </tr>
+              <tr>
+                <td><code>@bddx/selenium</code></td>
+                <td>Chrome, Firefox, Edge or Safari</td>
+                <td>Chrome, Firefox or Edge</td>
+                <td>Node.js 22 or newer. Selenium Manager downloads the matching driver on the first run. Safari needs <code>safaridriver --enable</code> once.</td>
+              </tr>
+              <tr>
+                <td><code>@bddx/axios</code></td>
+                <td>Any</td>
+                <td>Any</td>
+                <td>No browser. Needs network access to the API under test.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="install-node">Install Node.js</h2>
+        <p>Skip this if <code>node -v</code> already prints 20.10 or newer (22 or newer for Selenium).</p>
+        <div class="tabs" data-group="os">
+          <section data-tab="macos" data-label="macOS">
+            <p>Download the LTS installer from <a href="https://nodejs.org">nodejs.org</a>, or use Homebrew:</p>
+            <figure class="code-block"><pre><code class="lang-bash">$ brew install node@22
+$ node -v</code></pre></figure>
+          </section>
+          <section data-tab="windows" data-label="Windows">
+            <p>Download the LTS installer from <a href="https://nodejs.org">nodejs.org</a>, or use winget in PowerShell:</p>
+            <figure class="code-block"><pre><code class="lang-powershell">PS> winget install OpenJS.NodeJS.LTS
+PS> node -v</code></pre></figure>
+            <p>Open a new PowerShell window after installing so <code>node</code> and <code>npm</code> are on the path.</p>
+          </section>
+          <section data-tab="linux" data-label="Linux">
+            <p>Use your distribution's Node.js 22 package, the installers on <a href="https://nodejs.org">nodejs.org</a>, or a version manager such as nvm:</p>
+            <figure class="code-block"><pre><code class="lang-bash">$ nvm install 22
+$ node -v</code></pre></figure>
+          </section>
+        </div>
+
+        <h2 id="get-bddx">Get and build bddx</h2>
+        <ol class="steps">
+          <li>
+            <h3 id="clone">Clone the repository</h3>
+            <p>Put it next to the folder where your tests will live, for example in a <code>code</code> folder.</p>
+            <figure class="code-block"><pre><code class="lang-bash">$ git clone https://github.com/afsarali273/SmartBDD.git
+$ cd SmartBDD</code></pre></figure>
+          </li>
+          <li>
+            <h3 id="build">Install and build</h3>
+            <figure class="code-block"><pre><code class="lang-bash">$ npm install
+$ npm run build</code></pre></figure>
+            <p><code>npm run verify</code> also runs bddx's own tests, if you want to check the build.</p>
+          </li>
+          <li>
+            <h3 id="build-plugins">Build the plugins you need</h3>
+            <p>Each plugin is a separate package with its own dependencies. Build only the ones you use.</p>
+            <div class="tabs" data-group="os">
+              <section data-tab="macos" data-label="macOS / Linux">
+                <figure class="code-block"><pre><code class="lang-bash">$ (cd plugins/playwright && npm install && npm run build)
+$ (cd plugins/selenium && npm install && npm run build)
+$ (cd plugins/axios && npm install && npm run build)</code></pre></figure>
+              </section>
+              <section data-tab="windows" data-label="Windows">
+                <figure class="code-block"><pre><code class="lang-powershell">PS> cd plugins/playwright; npm install; npm run build; cd ../..
+PS> cd plugins/selenium; npm install; npm run build; cd ../..
+PS> cd plugins/axios; npm install; npm run build; cd ../..</code></pre></figure>
+              </section>
+            </div>
+          </li>
+        </ol>
+
+        <h2 id="first-project">Create your first project</h2>
+        <p>A bddx project is an ordinary Node.js project with feature files, step files and a config. This one tests a shopping basket and needs no browser.</p>
+        <figure class="code-block" data-title="Folder layout"><pre><code class="lang-text">code/
+├─ SmartBDD/                 the bddx clone from above
+└─ my-tests/
+   ├─ package.json
+   ├─ tsconfig.json
+   ├─ bddx.config.ts
+   ├─ features/
+   │  └─ basket.feature
+   └─ steps/
+      └─ basket.steps.ts</code></pre></figure>
+
+        <ol class="steps">
+          <li>
+            <h3 id="package-json">package.json</h3>
+            <p>The bddx packages come from the clone through <code>file:</code> paths, all four of them.</p>
+            <figure class="code-block" data-title="my-tests/package.json"><pre><code class="lang-json">{
+  "name": "my-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "bddx run" },
+  "dependencies": {
+    "@bddx/cli": "file:../SmartBDD/packages/cli",
+    "@bddx/core": "file:../SmartBDD/packages/core",
+    "@bddx/reporters": "file:../SmartBDD/packages/reporters",
+    "@bddx/runtime": "file:../SmartBDD/packages/runtime"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3"
+  }
+}</code></pre></figure>
+          </li>
+          <li>
+            <h3 id="tsconfig">tsconfig.json</h3>
+            <p>bddx runs TypeScript directly; this file is for your editor and for <code>tsc --noEmit</code> type checks.</p>
+            <figure class="code-block" data-title="my-tests/tsconfig.json"><pre><code class="lang-json">{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM", "ESNext.Decorators"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["bddx.config.ts", "steps/**/*.ts"]
+}</code></pre></figure>
+          </li>
+          <li>
+            <h3 id="config">bddx.config.ts</h3>
+            <figure class="code-block" data-title="my-tests/bddx.config.ts"><pre><code class="lang-ts">import { defineConfig } from '@bddx/cli';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  reporters: ['console', ['html', { outputFile: 'reports/report.html' }]],
+});</code></pre></figure>
+          </li>
+          <li>
+            <h3 id="feature">A feature file</h3>
+            <figure class="code-block" data-title="my-tests/features/basket.feature"><pre><code class="lang-gherkin">Feature: Shopping basket
+  Customers add products to a basket and pay the total.
+
+  Background:
+    Given the catalogue:
+      | product | price |
+      | apple   | 0.50  |
+      | melon   | 3.00  |
+
+  @smoke
+  Scenario: Add a single product
+    When I add 2 "apple"
+    Then the basket total is 1.00
+
+  Scenario Outline: Totals for different quantities
+    When I add &lt;qty&gt; "&lt;product&gt;"
+    Then the basket total is &lt;total&gt;
+
+    Examples:
+      | qty | product | total |
+      | 4   | apple   | 2.00  |
+      | 2   | melon   | 6.00  |</code></pre></figure>
+          </li>
+          <li>
+            <h3 id="steps">Step definitions</h3>
+            <p>A step is a pattern and a function. The first argument is the scenario context; the rest are the values the pattern captured.</p>
+            <figure class="code-block" data-title="my-tests/steps/basket.steps.ts"><pre><code class="lang-ts">import { strict as assert } from 'node:assert';
+import { Given, Then, When, defineParameterType, type DataTable } from '@bddx/runtime';
+
+// {money} turns "1.00" into 100 (cents)
+defineParameterType({ name: 'money', regexp: /\d+\.\d{2}/, transformer: (s) => Math.round(Number(s) * 100) });
+
+Given('the catalogue:', (ctx, table: DataTable) => {
+  const prices = Object.fromEntries(table.hashes().map((r) => [r['product'], Math.round(Number(r['price']) * 100)]));
+  ctx.state.set('prices', prices);
+  ctx.state.set('total', 0);
+});
+
+When('I add {int} {string}', (ctx, qty: number, product: string) => {
+  const prices = ctx.state.get&lt;Record&lt;string, number&gt;&gt;('prices');
+  ctx.state.set('total', ctx.state.get&lt;number&gt;('total') + qty * (prices[product] ?? 0));
+});
+
+Then('the basket total is {money}', (ctx, cents: number) => {
+  assert.equal(ctx.state.get&lt;number&gt;('total'), cents);
+});</code></pre></figure>
+          </li>
+        </ol>
+
+        <h2 id="run">Run it</h2>
+        <figure class="code-block"><pre><code class="lang-bash">$ cd my-tests
+$ npm install
+$ npx bddx run</code></pre></figure>
+        <p>bddx prints each scenario as it finishes and a summary at the end, and writes <code>reports/report.html</code>.</p>
+
+        <figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 7">
+          <div class="placeholder-frame"><p class="placeholder-what">Terminal output of the first run: three passing scenarios and the summary.</p></div>
+          <figcaption>
+            <p class="placeholder-how">Capture this yourself:</p>
+            <p>Run <code>npx bddx run</code> in <code>my-tests</code> in a terminal about 100 columns wide, dark terminal theme, and screenshot from the command line to the <code>PASSED</code> line.</p>
+            <p class="placeholder-file">Save as <code>assets/img/first-run-terminal.png</code>.</p>
+          </figcaption>
+        </figure>
+
+        <p>Some useful variations:</p>
+        <div class="tabs" data-group="os">
+          <section data-tab="macos" data-label="macOS / Linux">
+            <figure class="code-block"><pre><code class="lang-bash">$ npx bddx run --tags @smoke                 # only scenarios tagged @smoke
+$ npx bddx run features/basket.feature:11    # one scenario, by line
+$ npx bddx run --set workers=4               # change any config value
+$ npx bddx plan                              # show the schedule, run nothing</code></pre></figure>
+          </section>
+          <section data-tab="windows" data-label="Windows">
+            <figure class="code-block"><pre><code class="lang-powershell">PS> npx bddx run --tags '@smoke'             # quote tags: @ means something in PowerShell
+PS> npx bddx run features/basket.feature:11
+PS> npx bddx run --set workers=4
+PS> npx bddx plan</code></pre></figure>
+          </section>
+        </div>
+
+        <h2 id="windows-notes">Notes for Windows</h2>
+        <ul>
+          <li>Use PowerShell or Windows Terminal. The commands are the same as on macOS except where these docs show a Windows tab.</li>
+          <li>Quote values that start with <code>@</code> or contain spaces: <code>--tags '@smoke and not @wip'</code>.</li>
+          <li>JSON values for <code>--set</code> need single quotes outside, double quotes inside: <code>--set 'groups.api.dependsOn=["health"]'</code>.</li>
+          <li>Environment variables are set with <code>$env:NAME = 'value'</code> instead of <code>NAME=value</code>.</li>
+          <li>Paths in the config use forward slashes on every system: <code>features/**/*.feature</code>.</li>
+        </ul>
+        <aside class="callout note">
+          <p class="callout-title">Windows is not yet part of bddx's own test runs</p>
+          <p>bddx is plain Node.js and nothing in it is specific to one system, but its test suite has so far run on macOS and Linux. If something behaves differently on Windows, please open an issue with the command and its output.</p>
+        </aside>
+
+        <h2 id="plugins">Add browser or API testing</h2>
+        <p>Install the plugin and the tool it wraps in your project, then list the plugin in the config. Its fixtures (<code>page</code>, <code>driver</code>, <code>api</code> ...) are then available in every step.</p>
+        <div class="tabs" data-group="plugin">
+          <section data-tab="playwright" data-label="Playwright">
+            <figure class="code-block"><pre><code class="lang-bash">$ npm i -D file:../SmartBDD/plugins/playwright playwright @playwright/test
+$ npx playwright install chromium</code></pre></figure>
+            <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">import { defineConfig } from '@bddx/cli';
+import { playwright } from '@bddx/playwright';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  plugins: [playwright({ browser: 'chromium', context: { baseURL: 'https://example.com' } })],
+});</code></pre></figure>
+            <figure class="code-block" data-title="steps/home.steps.ts"><pre><code class="lang-ts">import { Given, Then } from '@bddx/runtime';
+import '@bddx/playwright'; // types for page, expect ...
+
+Given('I open the home page', async ({ page }) => {
+  await page.goto('/');
+});
+
+Then('the heading says {string}', async ({ page, expect }, text: string) => {
+  await expect(page.locator('h1')).toHaveText(text);
+});</code></pre></figure>
+          </section>
+          <section data-tab="selenium" data-label="Selenium">
+            <figure class="code-block"><pre><code class="lang-bash">$ npm i -D file:../SmartBDD/plugins/selenium selenium-webdriver</code></pre></figure>
+            <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">import { defineConfig } from '@bddx/cli';
+import { selenium } from '@bddx/selenium';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  plugins: [selenium({ browser: 'chrome', baseURL: 'https://example.com' })],
+});</code></pre></figure>
+            <figure class="code-block" data-title="steps/home.steps.ts"><pre><code class="lang-ts">import { strict as assert } from 'node:assert';
+import { Given, Then } from '@bddx/runtime';
+import '@bddx/selenium'; // types for driver, open, wait ...
+
+Given('I open the home page', async ({ open }) => {
+  await open('/');
+});
+
+Then('the heading says {string}', async ({ wait, selenium: { By, until } }, text: string) => {
+  const h1 = await wait(until.elementLocated(By.css('h1')));
+  assert.equal(await h1.getText(), text);
+});</code></pre></figure>
+          </section>
+          <section data-tab="axios" data-label="axios (API)">
+            <figure class="code-block"><pre><code class="lang-bash">$ npm i -D file:../SmartBDD/plugins/axios axios</code></pre></figure>
+            <figure class="code-block" data-title="bddx.config.ts"><pre><code class="lang-ts">import { defineConfig } from '@bddx/cli';
+import { axios } from '@bddx/axios';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  plugins: [axios({ baseURL: 'https://jsonplaceholder.typicode.com' })],
+});</code></pre></figure>
+            <figure class="code-block" data-title="steps/posts.steps.ts"><pre><code class="lang-ts">import { strict as assert } from 'node:assert';
+import { Then, When } from '@bddx/runtime';
+import '@bddx/axios'; // types for api, newApi ...
+
+When('I fetch post {int}', async ({ api, state }, id: number) => {
+  state.set('response', await api.get(`/posts/${id}`));
+});
+
+Then('the status is {int}', ({ state }, status: number) => {
+  assert.equal(state.get&lt;{ status: number }&gt;('response').status, status);
+});</code></pre></figure>
+          </section>
+        </div>
+
+        <h2 id="troubleshooting">If something goes wrong</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>You see</th><th>Do this</th></tr></thead>
+            <tbody>
+              <tr><td><code>bddx: command not found</code> or <code>npx</code> asks to install bddx</td><td>Run <code>npm install</code> in your project, and check the <code>file:</code> paths in <code>package.json</code> point at the clone.</td></tr>
+              <tr><td><code>Cannot find module '@bddx/…/dist/index.js'</code></td><td>bddx or the plugin is not built: run <code>npm run build</code> in the clone, or in the plugin folder.</td></tr>
+              <tr><td><code>Executable doesn't exist</code> (Playwright)</td><td>Download the browser: <code>npx playwright install chromium</code>. On Linux also <code>npx playwright install-deps</code>.</td></tr>
+              <tr><td><code>Fixture "page" is asynchronous and was not requested before use</code></td><td>Name the fixture in the step itself, <code>({ page })</code> or <code>const { page } = ctx</code>, instead of reading it inside a helper function.</td></tr>
+              <tr><td>Safari: <code>Could not create a session</code></td><td>Run <code>safaridriver --enable</code> once and allow remote automation in Safari's Develop menu.</td></tr>
+              <tr><td>Node version errors on install</td><td>Check <code>node -v</code>: 20.10 or newer, 22 or newer for Selenium.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="next">Where to go next</h2>
+        <ul>
+          <li>The two complete example projects in the clone: <code>examples/playwright-showcase</code> (139 scenarios, UI, API and both together) and <code>examples/selenium-showcase</code> (33 scenarios).</li>
+          <li>The pages on groups, dependencies, serial features and retries, listed under Orchestration in the sidebar, as they are written.</li>
+        </ul>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI options | bddx</title>
+  <meta name="description" content="Every bddx command and option, with defaults and the config option each one overrides.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Reference</p>
+        <h1>CLI options</h1>
+        <p class="lede">The complete list, as printed by bddx --help for version 0.1.0. Options apply to every command that makes sense for them.</p>
+
+<h2 id="commands">Commands</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+        <tbody>
+        <tr><td><code>bddx [run] [paths...]</code></td><td>Run scenarios. Paths are files, folders, globs or <code>file:line</code>.</td></tr>
+        <tr><td><code>bddx list [paths...]</code></td><td>List scenarios with ids and tags, without running.</td></tr>
+        <tr><td><code>bddx snippets [paths...]</code></td><td>Print code for every undefined step.</td></tr>
+        <tr><td><code>bddx validate [paths...]</code></td><td>Static checks on specs, plan, steps and hooks.</td></tr>
+        <tr><td><code>bddx plan [paths...]</code></td><td>Show groups, dependencies and locks. Options <code>--plan-format text|json|mermaid</code> and <code>--explain &lt;scenario id&gt;</code>.</td></tr>
+        <tr><td><code>bddx report &lt;events.ndjson...&gt;</code></td><td>Build reports from event files. Several files are merged and later runs win.</td></tr>
+        <tr><td><code>bddx history [--top n]</code></td><td>The flakiest and slowest scenarios. Needs <code>history: true</code>.</td></tr>
+        <tr><td><code>bddx docs [paths...]</code></td><td>Living documentation. Options <code>-o</code>, <code>--results</code> (repeatable), <code>--title</code>.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="selection">Selection</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>-t</code>, <code>--tags &lt;expr&gt;</code></td><td>Tag expression, such as <code>"@smoke and not @wip"</code>. Combined with the config <code>tags</code> using and.</td></tr>
+        <tr><td><code>--name &lt;regex&gt;</code></td><td>Only scenarios whose name matches.</td></tr>
+        <tr><td><code>--no-deps</code></td><td>Do not add the dependencies of selected scenarios.</td></tr>
+        <tr><td><code>--rerun-failed &lt;file&gt;</code></td><td>Only scenarios that did not pass in an events file, plus their dependencies.</td></tr>
+        <tr><td><code>--shard &lt;i/n&gt;</code></td><td>Run shard i of n. Also works with <code>plan</code>. See <a href="sharding.html">Sharding in CI</a>.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="configuration">Configuration</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>-c</code>, <code>--config &lt;file&gt;</code></td><td>Config file. Default: <code>bddx.config.{ts,mts,js,mjs,json}</code> in the current folder.</td></tr>
+        <tr><td><code>-p</code>, <code>--profile &lt;name&gt;</code></td><td>Use a profile from the config.</td></tr>
+        <tr><td><code>-s</code>, <code>--set &lt;path=value&gt;</code></td><td>Override any config value. Repeatable. See <a href="profiles.html">Profiles and --set</a>.</td></tr>
+        <tr><td><code>-D</code>, <code>--define k=v</code></td><td>Set <code>ctx.params.k</code>. Repeatable.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="running">Running</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>Config</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>-w</code>, <code>--workers &lt;n&gt;</code></td><td><code>workers</code></td><td>Scenarios running at once. Default 1.</td></tr>
+        <tr><td><code>--pool &lt;kind&gt;</code></td><td><code>pool</code></td><td><code>inline</code> (default) or <code>process</code>.</td></tr>
+        <tr><td><code>--timeout &lt;ms&gt;</code></td><td><code>stepTimeoutMs</code></td><td>Default step and hook timeout.</td></tr>
+        <tr><td><code>--run-timeout &lt;dur&gt;</code></td><td><code>runTimeout</code></td><td>Time budget for the run, such as <code>30m</code>.</td></tr>
+        <tr><td><code>--fail-fast</code></td><td><code>failFast</code></td><td>Stop after the first failed scenario.</td></tr>
+        <tr><td><code>--no-strict</code></td><td><code>strict</code></td><td>Pending and undefined steps do not fail the run.</td></tr>
+        <tr><td><code>--dry-run</code></td><td></td><td>Match steps and report undefined ones. Run nothing.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="retries">Retries</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>Config</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>-r</code>, <code>--retry &lt;n&gt;</code></td><td><code>retry.scenario</code></td><td>Retry failed scenarios up to n times.</td></tr>
+        <tr><td><code>--worker-crash-retry &lt;n&gt;</code></td><td><code>retry.workerCrash</code></td><td>Retry on a fresh process after a worker crash.</td></tr>
+        <tr><td><code>--fail-on-flaky</code></td><td><code>retry.failOnFlaky</code></td><td>Fail the run when a scenario passed only after a retry.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="output">Output</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>-f</code>, <code>--format &lt;spec&gt;</code></td><td>Add a reporter: <code>console</code>, <code>progress</code>, <code>html[:file]</code>, <code>junit[:file]</code>, <code>ndjson[:file]</code>, <code>cucumber-json[:file]</code>, <code>messages[:file]</code>. Repeatable.</td></tr>
+        <tr><td><code>--log-level &lt;level&gt;</code></td><td><code>debug</code>, <code>info</code> (default), <code>warn</code>, <code>error</code> or <code>silent</code>.</td></tr>
+        <tr><td><code>--fail-on-warnings</code></td><td>With <code>validate</code>: exit 1 when warnings are found.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="developing">Developing</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr><td><code>--watch</code></td><td>Run, then re-run on file changes. See <a href="debugging.html">Debugging and watch mode</a>.</td></tr>
+        <tr><td><code>--debug</code></td><td>Pause after a failing step.</td></tr>
+        <tr><td><code>--debug-step</code></td><td>Pause before every step.</td></tr>
+        <tr><td><code>--inspect [port]</code></td><td>Open the Node inspector, default port 9229, and wait for a debugger.</td></tr>
+        <tr><td><code>-h</code>, <code>--help</code>; <code>-v</code>, <code>--version</code></td><td>Help and version.</td></tr>
+        </tbody></table></div>
+
+        <h2 id="exit-codes">Exit codes</h2>
+        <p><code>0</code> passed, <code>1</code> failed, <code>2</code> usage, configuration or parse error, <code>130</code> interrupted.</p>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

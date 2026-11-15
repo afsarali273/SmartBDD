@@ -1,0 +1,53 @@
+title: Data files (CSV, JSON, Excel)
+section: Writing tests
+desc: Generate scenarios from CSV, TSV, JSON, YAML or Excel files with @data, filter rows, and use a different data folder per profile.
+lede: Put test data in a file, tag a scenario with @data, and bddx runs the scenario once per row. Each row gets its own id and its own line in the report.
+---
+<h2>A scenario from a CSV file</h2>
+<cb lang="text" title="data/prices.csv">product,qty,total
+apple,2,1.00
+pear,4,3.00
+melon,1,3.00</cb>
+<cb lang="gherkin" title="features/pricing-data.feature">@data:prices.csv
+Scenario: <qty> x <product> costs <total>
+  When I add <qty> "<product>"
+  Then the basket total is <total></cb>
+<p>The column names become the placeholders. This runs three scenarios. Files are looked up in the config's <code>dataDir</code>.</p>
+
+<h2>Fill an Examples block</h2>
+<cb lang="gherkin">Scenario Outline: Excel row: <item>
+  When I add <qty> "<item>"
+  Then the basket total is <total>
+
+  @data:prices.xlsx#Basket?active=yes @dataField:item=product
+  Examples:
+    | item | qty | total |</cb>
+<p>The Examples block keeps its header and takes its rows from the file. <code>@dataField:item=product</code> says that the placeholder <code>item</code> comes from the column <code>product</code>.</p>
+
+<h2>The tag in full</h2>
+<p><code>@data:&lt;file&gt;[#selector][?col=val&amp;rows=1-3,7]</code></p>
+<div class="table-wrap"><table>
+<thead><tr><th>Part</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>file</code></td><td>CSV, TSV, JSON, YAML or XLSX, by extension.</td></tr>
+<tr><td><code>#selector</code></td><td>For JSON and YAML, a dotted path to the array, such as <code>#data.users</code>. For Excel, the sheet name.</td></tr>
+<tr><td><code>?col=val</code></td><td>Keep rows where the column equals the value.</td></tr>
+<tr><td><code>rows=1-3,7</code></td><td>Keep these rows by their number in the file, header not counted.</td></tr>
+<tr><td><code>@dataField:placeholder=column</code></td><td>Map a placeholder to a different column.</td></tr>
+</tbody></table></div>
+<p>Row numbers count before filtering, so a filter never changes the id of a row. A data error, such as a missing file, is reported as a parse error on the tag line and the run exits with code 2.</p>
+
+<h2>A different folder per profile</h2>
+<p>With a profile, bddx tries <code>&lt;dataDir&gt;/&lt;profile&gt;/file</code> first. In <code>examples/basic</code>, <code>npx bddx run -p qa</code> reads <code>data/qa/prices.csv</code> instead of <code>data/prices.csv</code>.</p>
+
+<h2>Ids for data rows</h2>
+<p>A row's id is the scenario id followed by the file and the row number, such as <code>[prices.csv#2]</code>. Use it with <code>@dependsOn</code> like any other id.</p>
+
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">The HTML report showing a data-driven scenario as one table with a row per scenario.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>In <code>examples/basic</code> run <code>npx bddx run -t @data-driven</code>, open <code>reports/report.html</code>, go to the Results tab and expand the "Pricing from data files" feature. Capture the colour-coded table, light theme, about 1400 px wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/data-driven-report.png</code>.</p>
+  </figcaption>
+</figure>

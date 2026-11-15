@@ -1,0 +1,65 @@
+title: Fixtures and inject()
+section: Writing tests
+desc: Define named resources such as a browser page, request them in steps, choose their lifetime, and know how bddx finds them.
+lede: A fixture is a named value that bddx creates when a step first asks for it and cleans up afterwards. Browser pages, API clients and page objects all work this way.
+---
+<h2>Define a fixture</h2>
+<cb title="steps/support/fixtures.ts">import { defineFixture } from '@bddx/runtime';
+import { chromium, type Browser, type Page } from 'playwright';
+
+defineFixture('browser', () => chromium.launch(), {
+  scope: 'worker',
+  teardown: (browser) => browser.close(),
+});
+
+defineFixture('page', async ({ browser }) => browser.newPage(), {
+  teardown: async (page, { status }) => {
+    if (status === 'failed') await page.screenshot({ path: `reports/${Date.now()}.png` });
+    await page.close();
+  },
+});
+
+declare module '@bddx/runtime' {
+  interface Fixtures {
+    browser: Browser;
+    page: Page;
+  }
+}</cb>
+<p>The <code>declare module</code> block gives <code>ctx.page</code>, <code>({ page })</code> and <code>inject('page')</code> their types. You normally do not write this yourself. The <a href="playwright.html">Playwright</a> plugin ships it.</p>
+
+<h2>Scopes</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Scope</th><th>Lifetime</th></tr></thead>
+<tbody>
+<tr><td><code>'scenario'</code> (default)</td><td>One per scenario attempt. A retry gets a fresh one. Cleaned up when the scenario ends.</td></tr>
+<tr><td><code>'feature'</code></td><td>One per feature in a worker process, created on first use and cleaned up when the feature ends. A <code>@serial</code> feature runs in one worker process, so all its scenarios share the value.</td></tr>
+<tr><td><code>'worker'</code></td><td>One per worker process, created on first use and cleaned up after the <code>AfterWorker</code> hooks. With the inline pool that is one for the whole run.</td></tr>
+</tbody></table></div>
+<p>A fixture may use fixtures of the same or a longer scope: a scenario fixture can use a feature or worker fixture, never the other way round. Feature and worker fixtures can add <code>afterScenario(value, { status, error, ctx })</code>, called after every scenario that used them. Use it to take a screenshot of a shared page after each failed scenario.</p>
+
+<h2>Request a fixture</h2>
+<cb>// 1. Function steps and hooks: destructure the first parameter
+Given('I log in as {string}', async ({ page }, user: string) => { /* ... */ });
+
+// 2. Anywhere: await it
+const page = await ctx.fixture('page');
+
+// 3. Classes: inject() in a field
+@Steps()
+class LoginSteps {
+  private page = inject('page');
+}</cb>
+<p>bddx reads the first parameter of a step, a hook or a fixture setup and creates the fixtures you name there before the code runs. This is the same idea as Playwright Test.</p>
+<aside class="callout warning"><p class="callout-title">Warning</p><p>A helper function that reads <code>ctx.page</code> inside its body is invisible to bddx. If the page was not created yet you get the error "Fixture 'page' is asynchronous and was not requested before use". Destructure the fixture in the step that calls the helper, or use <code>await ctx.fixture('page')</code> inside it.</p></aside>
+
+<h2>Order of cleanup</h2>
+<p>Fixtures are cleaned up in reverse creation order, after the steps, the <code>After</code> hooks and <code>ctx.defer</code> callbacks. Cleanup receives the scenario's final <code>status</code> and <code>error</code>. If a cleanup throws, the scenario fails, with a hook named "fixture teardown".</p>
+
+<h2>Rules for names</h2>
+<p>Fixture names are identifiers. They cannot clash with built-in context properties such as <code>state</code>, <code>params</code> or <code>log</code>. Defining the same name twice is an error.</p>
+
+<h2>Page objects as fixtures</h2>
+<cb>defineFixture('login', ({ page }) => new LoginPage(page));
+
+Given('I log in as {string}', ({ login }, user: string) => login.as(user));</cb>
+<p>See <a href="class-steps.html">Class steps and page objects</a> for classes with <code>inject()</code>.</p>

@@ -1,0 +1,64 @@
+title: Hooks
+section: Writing tests
+desc: Run code before and after the run, a worker, a group, a feature, a rule, a scenario or a step.
+lede: Hooks run setup and cleanup code around your tests. bddx has the same levels as TestNG, from the whole run down to a single step.
+---
+<h2>The levels</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Level</th><th>Hooks</th><th>Runs</th></tr></thead>
+<tbody>
+<tr><td>Run</td><td><code>BeforeAll</code>, <code>AfterAll</code></td><td>Once, in the main process. Aliases: <code>BeforeSuite</code>, <code>AfterSuite</code>.</td></tr>
+<tr><td>Worker</td><td><code>BeforeWorker</code>, <code>AfterWorker</code></td><td>Once per process that runs scenarios. With the inline pool that is once per run.</td></tr>
+<tr><td>Group</td><td><code>BeforeGroup</code>, <code>AfterGroup</code></td><td>Before the first member and after the last member.</td></tr>
+<tr><td>Feature</td><td><code>BeforeFeature</code>, <code>AfterFeature</code></td><td>Before the first and after the last scenario of the feature.</td></tr>
+<tr><td>Rule</td><td><code>BeforeRule</code>, <code>AfterRule</code></td><td>The same, for a Rule.</td></tr>
+<tr><td>Scenario</td><td><code>Before</code>, <code>After</code></td><td>Every scenario attempt. Aliases: <code>BeforeScenario</code>, <code>AfterScenario</code>.</td></tr>
+<tr><td>Step</td><td><code>BeforeStep</code>, <code>AfterStep</code></td><td>Around every step.</td></tr>
+</tbody></table></div>
+
+<h2>Write a hook</h2>
+<cb title="steps/hooks.ts">import { BeforeAll, AfterAll, Before, After } from '@bddx/runtime';
+
+BeforeAll(async (ctx) => {
+  ctx.run.set('baseUrl', String(ctx.params['baseUrl'] ?? 'https://example.test'));
+});
+
+Before({ name: 'fresh basket' }, (ctx) => {
+  ctx.state.set('basket', { lines: [] });
+});
+
+After('@ui', async (ctx) => {
+  ctx.log.info(`finished ${ctx.scenario.name}`);
+});</cb>
+<p>The first argument is either a function or an options object (or a tag expression string) followed by the function.</p>
+
+<h2>Options</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>tags</code></td><td>Only run for scenarios whose tags match. A string alone is shorthand for it: <code>After('@ui', fn)</code>. For feature hooks the filter sees the feature's tags, and for rule hooks the rule's tags. <code>BeforeGroup('@group:checkout', fn)</code> picks a group.</td></tr>
+<tr><td><code>order</code></td><td>Lower numbers run first for <code>Before</code> hooks. <code>After</code> hooks run in reverse order. Default 0.</td></tr>
+<tr><td><code>alwaysRun</code></td><td>For <code>Before</code> hooks: run even if an earlier hook at this level failed.</td></tr>
+<tr><td><code>timeoutMs</code></td><td>Time budget for the hook.</td></tr>
+<tr><td><code>name</code></td><td>Shown in reports and errors.</td></tr>
+<tr><td><code>eachAttempt</code></td><td>Step hooks only: run around every repeat or retry of a step, not once per step.</td></tr>
+</tbody></table></div>
+
+<h2>What happens when a hook fails</h2>
+<ul>
+  <li>If a <code>Before</code> hook fails, the scenario's steps are skipped and the scenario fails. <code>After</code> hooks still run, so cleanup is not lost.</li>
+  <li>A failing <code>After</code> hook fails the scenario.</li>
+  <li>If <code>BeforeAll</code> fails, no scenario starts.</li>
+  <li>Failures of run, worker and group hooks appear in the console under "Hook failures".</li>
+</ul>
+
+<h2>Clean up with defer</h2>
+<p>For cleanup that belongs to one thing you created, <code>ctx.defer</code> keeps it next to the code that created it.</p>
+<cb>When('I create a test user', async (ctx) => {
+  const user = await api.createUser();
+  ctx.defer(() => api.deleteUser(user.id)); // runs when the scenario ends
+});</cb>
+
+<h2>Hooks and the process pool</h2>
+<p>With <code>pool: 'process'</code>, feature, group and rule hooks run once in every process that runs a member. Put per-process resources, such as a browser, in <code>BeforeWorker</code> or, better, in a worker-scoped <a href="fixtures.html">fixture</a>.</p>
+<aside class="callout tip"><p class="callout-title">Tip</p><p>If you find yourself writing a <code>Before</code> hook that creates a thing and an <code>After</code> hook that closes it, write a fixture instead. A fixture is created only when something uses it and always cleaned up.</p></aside>

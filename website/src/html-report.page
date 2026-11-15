@@ -1,0 +1,68 @@
+title: HTML report
+section: Reports
+desc: A tour of the self-contained HTML report: overview, results, timeline, dependency graph and history.
+lede: One file, no server, works offline. Send it by email or attach it to a CI run.
+---
+<h2>Create it</h2>
+<cb lang="bash">$ npx bddx -f html:reports/report.html
+$ open reports/report.html           # macOS
+$ start reports\report.html          # Windows</cb>
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">The Overview tab: KPI cards, status donut, duration histogram and failures by cause.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>Run <code>npx bddx</code> in <code>examples/orchestration</code> or <code>examples/resilience</code> with <code>history: true</code> a few times, open <code>reports/report.html</code> and capture the Overview tab, light theme, about 1400 px wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/report-overview.png</code>.</p>
+  </figcaption>
+</figure>
+
+<h2>What is in it</h2>
+<h3>Overview</h3>
+<ul>
+  <li>Cards for pass rate (with the change from the previous run), duration, parallelism and stability.</li>
+  <li>A status chart, duration percentiles and a histogram.</li>
+  <li>Failures grouped by cause, the slowest scenarios, and a breakdown by feature, tag and group.</li>
+</ul>
+<h3>Results</h3>
+<ul>
+  <li>Every scenario with its steps, errors, logs, screenshots and attachments, and every attempt of a retried scenario.</li>
+  <li>Data-driven scenarios (Examples, CSV, Excel, JSON) as one colour-coded table, with a row per scenario and a column per parameter.</li>
+  <li>Step tables and doc strings as tables tinted by the status of the step.</li>
+  <li>Filters by status, log level, tag and search text.</li>
+</ul>
+<h3>Execution</h3>
+<ul>
+  <li>The <strong>timeline</strong>: one lane per worker with a bar for each scenario attempt. Retried attempts are hatched. Worker start-up and busy percentage are shown. There is one row per group. Click a bar to open the scenario.</li>
+  <li>The <strong>dependency graph</strong>: scenarios and groups that wait for each other, left to right. Soft dependencies are dashed.</li>
+</ul>
+<figure class="placeholder" data-kind="screenshot" style="--ratio: 16 / 9">
+  <div class="placeholder-frame"><p class="placeholder-what">The Execution tab: the worker timeline and the dependency graph.</p></div>
+  <figcaption>
+    <p class="placeholder-how">Capture this yourself:</p>
+    <p>Run <code>npx bddx --workers 4</code> in <code>examples/orchestration</code>, open the Execution tab of the report and capture the timeline and graph together. Light theme, about 1400 px wide.</p>
+    <p class="placeholder-file">Save as <code>assets/img/report-execution.png</code>.</p>
+  </figcaption>
+</figure>
+<h3>History</h3>
+<ul>
+  <li>The pass rate of each recorded run.</li>
+  <li>A table of the flakiest scenarios and a trend per scenario. Needs <code>history: true</code>.</li>
+</ul>
+
+<h2>Share it</h2>
+<ul>
+  <li><strong>Copy summary</strong> puts a short text for Slack or a pull request on the clipboard.</li>
+  <li><strong>Copy link</strong> keeps the current tab, search and filters in the link.</li>
+  <li><strong>Download JSON</strong> and <strong>Print / PDF</strong> are in the toolbar.</li>
+  <li>Every scenario has a permanent link, and the theme follows your system setting with a switch.</li>
+  <li>It works from phone to wide screen.</li>
+</ul>
+
+<h2>Options</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>outputFile</code></td><td>Where to write it. Default <code>reports/report.html</code>.</td></tr>
+<tr><td><code>title</code></td><td>The title at the top.</td></tr>
+<tr><td><code>logLevel</code></td><td>The lowest level of log lines stored in the file.</td></tr>
+</tbody></table></div>

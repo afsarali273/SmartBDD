@@ -1,0 +1,60 @@
+title: Writing your own plugin
+section: Plugins
+desc: Build a bddx plugin that adds fixtures, hooks, steps or parameter types, and use it from a config file.
+lede: A plugin is a function that registers things when the process starts. Start with a file inside your project. Move it to a package when other projects need it.
+---
+<h2>The smallest plugin</h2>
+<cb title="support/db.plugin.ts">import { defineFixture, definePlugin } from '@bddx/runtime';
+import { Client } from 'pg';
+
+declare module '@bddx/runtime' {
+  interface Fixtures {
+    db: Client;
+  }
+}
+
+export default definePlugin<{ url: string }>({
+  name: 'db',
+  setup(options) {
+    defineFixture('db', async () => {
+      const client = new Client({ connectionString: options.url });
+      await client.connect();
+      return client;
+    }, { scope: 'worker', teardown: (client) => client.end() });
+  },
+});</cb>
+<cb title="bddx.config.ts">export default defineConfig({
+  plugins: [['./support/db.plugin.ts', { url: 'postgres://localhost/test' }]],
+});</cb>
+<p>Steps now ask for it: <code>Given('a user exists', async ({ db }) => { /* ... */ })</code>.</p>
+
+<h2>What setup can do</h2>
+<p><code>setup(options)</code> runs once in every process, before step files load. Inside it you can call the same functions as in a step file:</p>
+<ul>
+  <li><code>defineFixture</code>: named resources with a scope and cleanup. See <a href="fixtures.html">Fixtures and inject()</a>.</li>
+  <li><code>BeforeAll</code>, <code>BeforeWorker</code>, <code>Before</code>, <code>After</code> and the other hooks.</li>
+  <li><code>Given</code>, <code>When</code>, <code>Then</code>: steps that every project using the plugin gets.</li>
+  <li><code>defineParameterType</code>: shared parameter types.</li>
+</ul>
+
+<h2>Where names come from</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>In <code>plugins</code></th><th>Resolved as</th></tr></thead>
+<tbody>
+<tr><td><code>'@acme/bddx-db'</code></td><td>A package, looked up from the config folder.</td></tr>
+<tr><td><code>'./support/db.plugin.ts'</code></td><td>A file, relative to the config.</td></tr>
+<tr><td><code>['name', { options }]</code></td><td>The same, with options passed to <code>setup</code>.</td></tr>
+<tr><td><code>myPlugin({ options })</code></td><td>A plugin object, as the shipped plugins export.</td></tr>
+</tbody></table></div>
+<p>The package or file must export the result of <code>definePlugin</code> as its default export. To get the <code>myPlugin({ ... })</code> style, export a small function that returns the plugin with its options.</p>
+
+<h2>Guidelines from the shipped plugins</h2>
+<ul>
+  <li><strong>Do not depend on the library you wrap.</strong> Make it a peer dependency. Load the project's copy with <code>createRequire</code> from the working directory, so two copies never clash.</li>
+  <li><strong>Start nothing until asked.</strong> Fixtures are created on first use. Put expensive resources in <code>worker</code> scope.</li>
+  <li><strong>Read overrides from <code>ctx.params</code>,</strong> so <code>-D key=value</code> works.</li>
+  <li><strong>Attach evidence.</strong> Use <code>ctx.attach</code> or <code>ctx.log.image</code> for screenshots and call logs. Attach on failure by default.</li>
+  <li><strong>Test with a fake.</strong> The shipped plugins test against a fake of the library, so the tests need no browser. Add a test that makes the fake behave like the real library where it matters.</li>
+</ul>
+<aside class="callout note"><p class="callout-title">Not yet available</p><p>Plugins cannot yet add reporters, data loaders, retry analyzers or plan modifiers. These extension points are planned. See <code>docs/STATUS.md</code>.</p></aside>
+<p>For a complete example read <code>plugins/axios/src/index.ts</code>. It is a single file with options, three fixtures, a call log and an offline test.</p>

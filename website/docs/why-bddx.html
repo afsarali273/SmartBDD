@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Why bddx | bddx</title>
+  <meta name="description" content="What bddx is, who it is for, and what it adds to Gherkin specs: orchestration, resilience, plugins and reports.">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/theme.css">
+  <script>(function(){var t=null;try{t=localStorage.getItem('bddx-theme')}catch(e){}document.documentElement.setAttribute('data-theme',t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})()</script>
+</head>
+<body data-root="../">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <button class="icon-button menu-button" type="button" aria-label="Show navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <a class="brand" href="../index.html" aria-label="bddx home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="14" height="5" rx="1.5" fill="var(--accent)"/><rect x="9" y="13.5" width="20" height="5" rx="1.5" fill="currentColor" opacity=".85"/><rect x="5" y="21" width="11" height="5" rx="1.5" fill="currentColor" opacity=".4"/><rect x="18" y="21" width="9" height="5" rx="1.5" fill="var(--accent)"/></svg>
+      <span>bddx</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="getting-started.html">Docs</a>
+      <a href="getting-started.html#plugins">Plugins</a>
+      <a href="https://github.com/afsarali273/SmartBDD">GitHub</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Use dark theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <nav class="sidebar" aria-label="Documentation"></nav>
+
+    <main class="doc" id="main">
+      <article class="doc-content">
+        <p class="breadcrumb"><a href="../index.html">bddx</a> / Introduction</p>
+        <h1>Why bddx</h1>
+        <p class="lede">bddx is a test runner for automation suites written as Gherkin specs. It keeps the readable feature files and adds the control that large UI and API suites need: what runs in parallel, what must run in order, and what to do when a test fails.</p>
+
+<h2 id="what-bddx-is">What bddx is</h2>
+        <p>You write scenarios in <code>.feature</code> files and the steps behind them in TypeScript. bddx finds the scenarios, builds a schedule, runs them on workers, retries what should be retried and writes the reports.</p>
+        <p>It is an automation framework with BDD-style specs, not a methodology. Use the specs to share what a test does with people who do not read code. Use the runner to get a fast, stable suite.</p>
+        <aside class="callout note"><p class="callout-title">Not tied to a browser library</p><p>bddx core depends on no browser or HTTP library. Playwright, Selenium and axios are plugins that your project installs. See <a href="plugins.html">How plugins work</a>.</p></aside>
+
+        <h2 id="what-you-get">What you get</h2>
+        <div class="table-wrap"><table>
+        <thead><tr><th>You need to</th><th>bddx gives you</th><th>Read</th></tr></thead>
+        <tbody>
+        <tr><td>Run independent tests side by side</td><td><code>workers</code> and an optional process pool: one Node.js process per worker.</td><td><a href="process-pool.html">Worker processes</a></td></tr>
+        <tr><td>Keep a journey in order inside a parallel run</td><td><code>@serial</code> on a feature. Other features keep running.</td><td><a href="serial-features.html">Serial features</a></td></tr>
+        <tr><td>Run setup first, reports last</td><td>Groups with <code>dependsOn</code>, plus <code>@dependsOn</code> between scenarios.</td><td><a href="groups.html">Groups</a>, <a href="dependencies.html">Dependencies</a></td></tr>
+        <tr><td>Stop two tests from using the same database at once</td><td><code>@lock:name</code>, <code>@exclusive</code> and <code>@priority:n</code>.</td><td><a href="locks.html">Locks and priority</a></td></tr>
+        <tr><td>Survive a flaky environment without hiding it</td><td>Scenario, group and run retries. A pass after a failure is reported as flaky. <code>@quarantine</code> keeps a known-bad test visible without failing the build.</td><td><a href="retries.html">Retries and flaky tests</a></td></tr>
+        <tr><td>Split a suite across CI machines</td><td><code>--shard i/n</code>, balanced by recorded duration.</td><td><a href="sharding.html">Sharding in CI</a></td></tr>
+        <tr><td>Drive test data from files</td><td><code>@data:</code> with CSV, TSV, JSON, YAML and Excel.</td><td><a href="data-files.html">Data files</a></td></tr>
+        <tr><td>Use a real browser or API client</td><td>Plugins that expose the full Playwright, Selenium or axios API as fixtures.</td><td><a href="playwright.html">Playwright</a>, <a href="selenium.html">Selenium</a>, <a href="axios.html">axios</a></td></tr>
+        <tr><td>Show results to a team</td><td>A single-file HTML report with a timeline, dependency graph and history. JUnit XML, Cucumber JSON and an NDJSON event stream.</td><td><a href="reporters.html">Reporters</a></td></tr>
+        </tbody></table></div>
+
+        <h2 id="one-run-parallel-and-serial-together">One run, parallel and serial together</h2>
+        <p>Most suites mix work that can run side by side with work that cannot. A login test and a catalogue test are independent. A checkout journey is not: add to basket, pay, see the receipt. bddx plans both in one run, so you do not split the suite into separate jobs.</p>
+        <figure class="placeholder" data-kind="ai" style="--ratio: 16 / 9">
+          <div class="placeholder-frame"><p class="placeholder-what">A run schedule: four worker lanes, a setup group first, then parallel and serial groups, then reports last.</p></div>
+          <figcaption>
+            <p class="placeholder-how">Generate with an AI diagram or image tool. Prompt:</p>
+            <pre class="prompt">Flat technical schedule chart, white background, font IBM Plex Sans. Time runs left to right. Four horizontal lanes labelled w1, w2, w3, w4. First column of blocks: one block "setup (serial)" on lane w1 only, other lanes empty and labelled "waiting". Second column: block group "checkout (parallel, 3 workers)" spread across w1, w2, w3, and a block "payments (serial)" on w4 with a small lock icon labelled "payments-db". Last column: one block "reports (runs after checkout and payments)" on w1. Use deep cyan (#0B7A86) for setup, teal (#2F8F6B) for checkout, amber (#B7791F) for payments, slate (#5B6385) for reports. Thin navy (#171A33) text, no gradients, no shadows.</pre>
+            <p class="placeholder-file">Save as <code>assets/img/why-schedule.png</code>.</p>
+          </figcaption>
+        </figure>
+
+        <h2 id="who-it-is-for">Who it is for</h2>
+        <ul>
+          <li>Teams with a UI and API suite that has outgrown one sequential run.</li>
+          <li>QA engineers who write specs and want developers to share the step code.</li>
+          <li>Teams moving from Cucumber.js who want orchestration without writing their own scripts. See <a href="from-cucumber.html">Coming from Cucumber.js</a>.</li>
+        </ul>
+
+        <h2 id="when-another-tool-fits-better">When another tool fits better</h2>
+        <ul>
+          <li>You write unit tests. Use your language's unit test runner.</li>
+          <li>You only need a handful of browser tests and nobody reads the specs. A plain Playwright Test project is simpler.</li>
+          <li>You need a stable 1.0 today. bddx is at version 0.1 and is not on npm yet. You build it from the repository. See <a href="getting-started.html">Getting started</a>.</li>
+        </ul>
+
+        <h2 id="current-state">Current state</h2>
+        <p>The TypeScript runtime, CLI, reporters and the Playwright, Selenium and axios plugins are working. A Java port is planned and will use the same configuration, event stream and conformance tests. Planned work, such as a VS Code extension, is listed in <code>docs/STATUS.md</code> in the repository.</p>
+
+        <nav class="pager" aria-label="Previous and next page"></nav>
+      </article>
+    </main>
+
+    <aside class="toc" aria-label="On this page"></aside>
+  </div>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

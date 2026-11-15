@@ -1,0 +1,52 @@
+title: Profiles and --set
+section: Running
+desc: Name a set of overrides as a profile, and change any option for a single run with --set and -D.
+lede: A profile is a named set of options, such as ci or smoke. For one-off changes, --set overrides any option without editing the config file.
+---
+<h2>Profiles</h2>
+<cb title="bddx.config.ts">export default defineConfig({
+  tags: 'not @wip',
+  reporters: ['console'],
+  profiles: {
+    ci:    { reporters: ['progress', 'junit:reports/junit.xml'], failFast: true },
+    smoke: { tags: '@smoke' },
+    qa:    { params: { baseURL: 'https://qa.example.com' } },
+  },
+});</cb>
+<cb lang="bash">$ npx bddx -p ci
+$ npx bddx -p smoke</cb>
+<p>A profile is merged over the base config. Later wins, with these exceptions:</p>
+<ul>
+  <li><code>tags</code> are combined with <strong>and</strong>. The profile above runs <code>(not @wip) and (@smoke)</code>.</li>
+  <li><code>params</code>, <code>groups</code> and <code>retry</code> are merged key by key.</li>
+  <li>Every other option, such as <code>reporters</code>, is replaced.</li>
+</ul>
+<p>A profile also picks the data folder: <code>-p qa</code> reads <code>data/qa/file</code> first. See <a href="data-files.html">Data files</a>. An unknown profile is a usage error that lists the profiles that exist.</p>
+
+<h2>--set: override anything for one run</h2>
+<cb lang="bash">$ npx bddx --set workers=6
+$ npx bddx --set groups.checkout.mode=serial
+$ npx bddx --set 'groups.api.dependsOn=["setup"]'
+$ npx bddx --set params.baseURL=https://qa.example.com
+$ npx bddx --set retry.scenario=2 --set retry.delay=500</cb>
+<ul>
+  <li>The part before <code>=</code> is a path into the config. Dots go deeper.</li>
+  <li>The value is read as JSON when it can be: numbers, <code>true</code>, <code>false</code>, arrays, objects. Anything else is text.</li>
+  <li><code>--set</code> repeats.</li>
+  <li>A <code>--set</code> replaces the whole value at that path. Setting <code>reporters</code> replaces the whole list.</li>
+  <li>Top-level names are checked: <code>--set wokers=6</code> is a usage error that lists the valid names.</li>
+</ul>
+<aside class="callout warning"><p class="callout-title">Quoting</p><p>Quote values that contain <code>[</code>, <code>]</code>, <code>{</code>, <code>}</code> or quotes. On macOS and Linux use single quotes around the whole argument. In PowerShell use double quotes and escape inner ones: <code>--set "groups.api.dependsOn=[\"setup\"]"</code>.</p></aside>
+
+<h2>-D: parameters for steps</h2>
+<cb lang="bash">$ npx bddx -D baseURL=https://staging.example.com -D browser=firefox</cb>
+<p>Each <code>-D key=value</code> sets <code>ctx.params.key</code>. The plugins read their own overrides from here, such as <code>browser</code>, <code>headed</code>, <code>baseURL</code> and <code>token</code>.</p>
+
+<h2>Which wins</h2>
+<ol>
+  <li>A tag on the scenario, such as <code>@retry:3</code>, beats everything.</li>
+  <li>Then the group's setting, such as <code>groups.x.retry</code>.</li>
+  <li>Then a command-line flag such as <code>--retry 1</code>, <code>--set</code> or <code>-D</code>.</li>
+  <li>Then the profile, then the base config.</li>
+</ol>
+<p>Flags that have a matching option, such as <code>-w</code>, <code>-t</code> and <code>-r</code>, win over the config file the same way <code>--set</code> does.</p>

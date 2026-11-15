@@ -1,0 +1,54 @@
+title: Serial features
+section: Orchestration
+desc: Run the scenarios of one feature in order while the rest of the suite stays parallel, and share one browser session across them.
+lede: Mark a feature @serial when its scenarios form a journey. They run one after another in file order, while other features keep running beside it.
+---
+<h2>The basics</h2>
+<cb lang="gherkin" title="features/checkout-journey.feature">@serial
+Feature: Checkout journey
+  Scenario: Add to basket
+    ...
+  Scenario: Pay
+    ...
+  Scenario: See the receipt
+    ...</cb>
+<p>"Pay" starts when "Add to basket" has finished, whether it passed or not. "See the receipt" follows "Pay". Other features and other groups run in parallel as usual, so two serial features run side by side, each in its own order.</p>
+
+<h2>Where you can put it</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Where</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>@serial</code> on a Feature</td><td>Every scenario waits for the previous one.</td></tr>
+<tr><td><code>@serial</code> on a Rule</td><td>Only that rule's scenarios are chained.</td></tr>
+<tr><td>Config <code>featureMode: 'serial'</code></td><td>Every feature is serial. Add <code>@parallel</code> to a feature to opt it out.</td></tr>
+</tbody></table></div>
+
+<h2>Rules worth knowing</h2>
+<ul>
+  <li>The order is file order. Outline and data rows run in row order.</li>
+  <li>A failed scenario does not stop the next one. The chain orders; it does not depend. Add <code>@dependsOn:id</code> when a scenario really needs an earlier one to pass.</li>
+  <li>Groups, locks, priorities, retries and <code>@exclusive</code> still apply. A scenario retry finishes before the next scenario starts.</li>
+  <li>If you select a subset with <code>-t</code>, <code>--name</code>, <code>file:line</code> or <code>--rerun-failed</code>, only the selected scenarios are chained.</li>
+  <li><code>--shard</code> keeps a serial feature on one shard.</li>
+</ul>
+<aside class="callout danger"><p class="callout-title">Errors, exit code 2</p><p><code>@serial</code> on a single scenario, <code>@serial</code> together with <code>@parallel</code>, and a scenario that depends on a later scenario in the same serial feature.</p></aside>
+
+<h2>Share one browser session</h2>
+<p>Serial features are the natural place to log in once and keep the page open. The browser plugins support this with a tag on the feature.</p>
+<div class="tabs" data-group="plugin">
+  <section data-tab="playwright" data-label="Playwright">
+<cb lang="gherkin">@serial @reuseContext
+Feature: Checkout journey</cb>
+<p>Use <code>@freshContext</code> on a scenario to leave the shared context.</p>
+  </section>
+  <section data-tab="selenium" data-label="Selenium">
+<cb lang="gherkin">@serial @reuseSession
+Feature: Checkout journey</cb>
+<p>Use <code>@freshSession</code> on a scenario to leave the shared session.</p>
+  </section>
+</div>
+<p>With <code>pool: 'process'</code> every scenario of a serial feature runs in the same worker process, so the session survives between them. Under the hood this uses a feature-scoped fixture. See <a href="fixtures.html">Fixtures and inject()</a>.</p>
+<aside class="callout warning"><p class="callout-title">Warning</p><p>A retried scenario continues on the shared page, not on a fresh one. Start each scenario from a known URL.</p></aside>
+
+<h2>See the chain in the plan</h2>
+<p><code>npx bddx plan</code> shows each chained scenario with <code>&lt;- previous (feature runs in file order)</code>.</p>

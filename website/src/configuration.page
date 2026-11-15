@@ -1,0 +1,60 @@
+title: Configuration
+section: Running
+desc: The bddx.config.ts file: where specs and steps live, reporters, parameters, workers, groups, retries and plugins.
+lede: The config file holds everything that stays the same between runs. Everything in it can be overridden for one run from the command line.
+---
+<h2>The file</h2>
+<p>bddx looks for <code>bddx.config.ts</code> (or <code>.mts</code>, <code>.js</code>, <code>.mjs</code>, <code>.json</code>) in the folder you run it from. Use <code>-c path</code> to pick another. All paths and globs in it are relative to the config file's folder.</p>
+<cb title="bddx.config.ts">import { defineConfig } from '@bddx/cli';
+
+export default defineConfig({
+  features: 'features/**/*.feature',
+  steps: 'steps/**/*.ts',
+  dataDir: 'data',
+  tags: 'not @wip',
+  params: { currency: 'SGD' },
+  workers: 4,
+  pool: 'process',
+  retry: { scenario: 1, delay: '200ms' },
+  history: true,
+  reporters: [
+    'console',
+    ['html', { outputFile: 'reports/report.html', title: 'Shop tests' }],
+    ['junit', { outputFile: 'reports/junit.xml' }],
+  ],
+  profiles: {
+    ci:    { reporters: ['progress', 'junit:reports/junit.xml'], failFast: true },
+    smoke: { tags: '@smoke' },
+  },
+});</cb>
+<p><code>defineConfig</code> adds type checking and completion. It returns what you give it.</p>
+
+<h2>The options by topic</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Topic</th><th>Options</th><th>Read</th></tr></thead>
+<tbody>
+<tr><td>Where things are</td><td><code>features</code>, <code>steps</code>, <code>dataDir</code>, <code>language</code></td><td><a href="feature-files.html">Feature files</a></td></tr>
+<tr><td>What runs</td><td><code>tags</code>, <code>name</code></td><td><a href="tags.html">Tags and selection</a></td></tr>
+<tr><td>How it runs</td><td><code>workers</code>, <code>pool</code>, <code>groups</code>, <code>defaultMode</code>, <code>featureMode</code></td><td><a href="groups.html">Groups</a>, <a href="process-pool.html">Worker processes</a></td></tr>
+<tr><td>When it fails</td><td><code>retry</code>, <code>failFast</code>, <code>strict</code>, <code>stepTimeoutMs</code>, <code>scenarioTimeout</code>, <code>runTimeout</code></td><td><a href="retries.html">Retries and flaky tests</a></td></tr>
+<tr><td>What you see</td><td><code>reporters</code>, <code>logLevel</code>, <code>history</code></td><td><a href="reporters.html">Reporters</a></td></tr>
+<tr><td>Values for steps</td><td><code>params</code></td><td><a href="steps.html">Step definitions</a></td></tr>
+<tr><td>Extra capabilities</td><td><code>plugins</code></td><td><a href="plugins.html">How plugins work</a></td></tr>
+<tr><td>Quality gates</td><td><code>validation</code></td><td><a href="cli.html">Command line</a></td></tr>
+</tbody></table></div>
+<p>Every option, with its type and default, is in <a href="reference-config.html">Config options</a>.</p>
+
+<h2>Defaults when you leave things out</h2>
+<ul>
+  <li><code>features</code>: <code>features/**/*.feature</code> and <code>features/**/*.feature.md</code></li>
+  <li><code>steps</code>: <code>steps/**/*.{ts,js,mjs}</code> and <code>features/**/*.steps.{ts,js,mjs}</code></li>
+  <li><code>workers</code>: 1. <code>pool</code>: <code>'inline'</code>. <code>strict</code>: <code>true</code>.</li>
+</ul>
+
+<h2>Parameters for your steps</h2>
+<p><code>params</code> values are available as <code>ctx.params</code>. <code>-D key=value</code> overrides them for a run.</p>
+<cb>When('I open the shop', ({ page, params }) => page.goto(String(params['baseURL'])));</cb>
+<aside class="callout note"><p class="callout-title">Note</p><p>The name <code>params</code> is reserved. Do not use it as a fixture name.</p></aside>
+
+<h2>Check the result</h2>
+<p>To see what a run would use after profiles and overrides, run <code>npx bddx plan</code> or <code>npx bddx list</code> with the same options. Both read the same config.</p>
