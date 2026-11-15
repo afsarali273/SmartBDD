@@ -220,7 +220,7 @@ function donut(counts: Counts, total: number, centre: string): string {
   return `<svg class="donut" viewBox="0 0 42 42" role="img" aria-label="Scenario results"><circle r="${R}" cx="21" cy="21" class="dn-bg"/>${parts.join('')}<text x="21" y="21.5" class="dn-main">${esc(centre)}</text><text x="21" y="26" class="dn-sub">pass rate</text></svg>`;
 }
 
-function stackBar(counts: Counts, total: number): string {
+export function stackBar(counts: Counts, total: number): string {
   if (!total) return '<div class="sbar"></div>';
   return `<div class="sbar">${STATUSES.filter((s) => counts[s] > 0)
     .map((s) => `<i style="width:${((counts[s] / total) * 100).toFixed(2)}%;background:var(--${s})" title="${counts[s]} ${s}"></i>`)

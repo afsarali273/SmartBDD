@@ -11,7 +11,7 @@
  *    and note it in docs/DECISIONS.md.
  *  - A Cucumber Messages adapter (phase 5) will translate this stream; keep it 1:1 mappable.
  */
-import type { ErrorInfo, ParseErrorInfo, Status } from './model.js';
+import type { ErrorInfo, ParseErrorInfo, Status, StepArgument } from './model.js';
 
 export const EVENT_SCHEMA_VERSION = 1;
 
@@ -53,7 +53,8 @@ export interface PlannedScenario {
   /** Present for Scenario Outline rows. */
   example?: { name: string; index: number; values: Record<string, string>; source?: string; sourceRow?: number };
   tags: string[];
-  steps: Array<{ id: string; keyword: string; text: string; line: number }>;
+  /** `arg`: the step's data table or doc string (added later; optional, so older event files still parse). */
+  steps: Array<{ id: string; keyword: string; text: string; line: number; arg?: StepArgument }>;
   /** Phase 3 orchestration facts (from the plan). */
   groups?: string[];
   dependsOn?: Array<{ id: string; soft: boolean }>;

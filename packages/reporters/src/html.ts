@@ -18,6 +18,7 @@ import type {
 } from '@bddx/core';
 import { HistoryRecorder, scenarioHistory, type HistoryRun } from '@bddx/core';
 import { renderGraph, renderHistory, renderTimeline, trendDots, VIEW_CSS, type Interval, type Startup } from './html-views.js';
+import { buildDatasets, DATA_CSS, renderArg, renderDatasetClose, renderDatasetOpen } from './html-data.js';
 import { computeStats, dataJson, renderOverview, STATS_CSS, summaryText } from './html-stats.js';
 import { attemptsNote, LogIndex, type ReportLogLevel } from './logs.js';
 import type { Reporter, ReporterOptions } from './types.js';
@@ -255,6 +256,7 @@ export function renderHtml(d: ReportData): string {
   const anchorIds = new Map(d.plan.map((p, i) => [p.id, `sc-${i}`]));
   const anchor = (id: string) => anchorIds.get(id) ?? 'top';
   const hasHistory = d.history.length >= 2;
+  const datasetOf = buildDatasets(d.plan);
   const byFeature = new Map<string, PlannedScenario[]>();
   for (const sc of d.plan) byFeature.set(sc.uri, [...(byFeature.get(sc.uri) ?? []), sc]);
 
@@ -264,7 +266,7 @@ export function renderHtml(d: ReportData): string {
       const counts = ORDER.filter((st) => statuses.includes(st))
         .map((st) => `<span class="pill st-${st}">${statuses.filter((x) => x === st).length} ${st}</span>`)
         .join('');
-      const items = scenarios
+      const itemHtml = scenarios
         .map((sc) => {
           const r = d.results.get(sc.id);
           const status: Status = r?.status ?? 'skipped';
@@ -315,25 +317,52 @@ export function renderHtml(d: ReportData): string {
                 st.keyword.trim(),
               )}</span> <span class="txt">${esc(st.text)}</span><span class="dur">${ms(sf?.durationMs)}</span></div>${renderError(
                 sst === 'failed' || sst === 'ambiguous' ? sf?.error : undefined,
-              )}${snippet}${triesHtml}${renderLogs(d.logs.forStep(sc.id, st.id))}${renderAttachments(attBy.get(`${sc.id}|${st.id}`) ?? [])}</li>`;
+              )}${snippet}${renderArg(st.arg, sst)}${triesHtml}${renderLogs(d.logs.forStep(sc.id, st.id))}${renderAttachments(attBy.get(`${sc.id}|${st.id}`) ?? [])}</li>`;
             })
             .join('');
-          const text = esc(`${sc.name} ${sc.id} ${sc.uri} ${sc.tags.join(' ')} ${(sc.groups ?? []).join(' ')}`.toLowerCase());
+          const ds = datasetOf.get(sc.id);
+          const firstErr = r?.error ?? sc.steps.map((st) => d.steps.get(`${sc.id}|${st.id}`)?.error).find((e) => !!e);
+          const rowNote =
+            status === 'skipped' && r?.reason
+              ? `<span class="dc-err" style="color:var(--skipped)">${esc(r.reason)}</span>`
+              : firstErr && status !== 'passed' && status !== 'skipped'
+                ? `<span class="dc-err">${esc(firstErr.message.split('\n')[0] ?? '')}</span>`
+                : '';
+          const dataSummary = ds
+            ? `<summary><span class="ico">${ICON[status]}</span><span class="dc dc-row">${esc(String(sc.example!.sourceRow ?? sc.example!.index))}</span>${ds.columns
+                .map((c) => `<span class="dc" title="${esc(`${c}: ${sc.example!.values[c] ?? ''}`)}">${esc(sc.example!.values[c] ?? '')}</span>`)
+                .join('')}<span class="dc dc-flags">${flags}${histHtml}</span><span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span><button class="perma" type="button" data-link="${anchor(sc.id)}" title="Copy link to this scenario" aria-label="Copy link to this scenario">🔗</button>${rowNote}</summary>`
+            : '';
+          const text = esc(`${sc.name} ${sc.id} ${sc.uri} ${sc.tags.join(' ')} ${(sc.groups ?? []).join(' ')} ${Object.values(sc.example?.values ?? {}).join(' ')} ${sc.example?.source ?? ''}`.toLowerCase());
           const open = status === 'failed' || status === 'ambiguous' || status === 'undefined' ? ' open' : '';
           return `<details class="scenario st-${status}" id="${anchor(sc.id)}" data-status="${status}" data-text="${text}"${open}>
-<summary><span class="ico">${ICON[status]}</span><span class="name">${esc(sc.name)}</span>${
+${ds ? dataSummary : `<summary><span class="ico">${ICON[status]}</span><span class="name">${esc(sc.name)}</span>${
             sc.ruleName ? `<span class="rule">Rule: ${esc(sc.ruleName)}</span>` : ''
-          }${row ? `<span class="row">${esc(row)}</span>` : ''}${flags}${histHtml}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span><button class="perma" type="button" data-link="${anchor(sc.id)}" title="Copy link to this scenario" aria-label="Copy link to this scenario">🔗</button></summary>
+          }${row ? `<span class="row">${esc(row)}</span>` : ''}${flags}${histHtml}<span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span><button class="perma" type="button" data-link="${anchor(sc.id)}" title="Copy link to this scenario" aria-label="Copy link to this scenario">🔗</button></summary>`}
 <div class="body"><div class="where"><code>${esc(sc.id)}</code> · ${esc(sc.uri)}:${sc.line}</div>${chips ? `<div class="chips">${chips}</div>` : ''}${deps}${
             r?.reason ? `<div class="reason">Skipped: ${esc(r.reason)}</div>` : ''
           }${priorHtml}${renderError(status === 'failed' && !sc.steps.some((st) => d.steps.get(`${sc.id}|${st.id}`)?.error) ? r?.error : undefined)}${renderLogs(
             d.logs.scenarioOnly(sc.id),
           )}${renderAttachments(attBy.get(`${sc.id}|`) ?? [])}<ol class="steps">${steps}</ol></div></details>`;
-        })
-        .join('\n');
+        });
+      const items: string[] = [];
+      for (let i = 0; i < scenarios.length; ) {
+        const ds = datasetOf.get(scenarios[i]!.id);
+        if (!ds) {
+          items.push(itemHtml[i]!);
+          i++;
+          continue;
+        }
+        let j = i;
+        while (j < scenarios.length && datasetOf.get(scenarios[j]!.id) === ds) j++;
+        items.push(
+          renderDatasetOpen(ds, (id) => d.results.get(id)?.status ?? 'skipped', (id) => d.results.get(id)?.durationMs ?? 0) + itemHtml.slice(i, j).join('\n') + renderDatasetClose(),
+        );
+        i = j;
+      }
       return `<section class="feature"><h2>${esc(scenarios[0]!.feature?.name ?? scenarios[0]!.featureName)} <span class="uri">${esc(uri)}</span> ${counts}</h2>${
         scenarios[0]!.feature?.description ? `<p class="desc">${esc(scenarios[0]!.feature.description)}</p>` : ''
-      }${items}</section>`;
+      }${items.join('\n')}</section>`;
     })
     .join('\n');
 
@@ -474,6 +503,7 @@ body:not(.show-bddx) .src-bddx,body:not(.show-bddx) .only-fw{display:none}detail
 .empty{color:var(--muted);text-align:center;padding:30px 0}
 @media print{header.top{position:static}.tabs,.actions,.toolbar,.perma,pre .cp{display:none}.panel{display:block!important;margin-bottom:24px}body{background:#fff}.card,.kpi{box-shadow:none;break-inside:avoid}}
 ${STATS_CSS}
+${DATA_CSS}
 ${VIEW_CSS}</style></head>
 <body class="min-info">
 <header class="top"><div class="wrap">

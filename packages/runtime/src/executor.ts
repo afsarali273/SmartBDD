@@ -1555,7 +1555,7 @@ function plannedScenario(n: PlanNode) {
         }
       : {}),
     tags: s.tags.map((t) => t.name),
-    steps: s.steps.map((st) => ({ id: st.id, keyword: st.keyword, text: st.text, line: st.line })),
+    steps: s.steps.map((st) => ({ id: st.id, keyword: st.keyword, text: st.text, line: st.line, ...(st.argument ? { arg: st.argument } : {}) })),
     groups: n.groups,
     dependsOn: n.deps.map((d) => ({ id: d.target, soft: d.soft })),
     locks: n.locks,

@@ -392,3 +392,88 @@ describe('dependency graph: standalone scenarios', () => {
     expect(all).not.toContain('no dependencies');
   });
 });
+
+describe('html report: data-driven scenarios and step arguments', () => {
+  const FEATURE_DATA = `Feature: Pricing
+  Scenario Outline: Total for <qty> <item>
+    Given the catalogue:
+      | item  | price |
+      | apple | 0.50  |
+    When I add <qty> "<item>"
+    Then ok
+
+    Examples: cheap
+      | item  | qty |
+      | apple | 2   |
+      | pear  | 4   |
+
+    Examples: expensive
+      | item  | qty |
+      | melon | 1   |
+
+  Scenario: With a doc string
+    Given a doc:
+      \"\"\"json
+      {"a": 1}
+      \"\"\"
+`;
+
+  async function dataHtml() {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const r = new SupportRegistry();
+    r.defineStep('the catalogue:', () => {});
+    r.defineStep('I add {int} {string}', (_c: StepContext, qty: number, item: string) => {
+      if (item === 'pear') throw new Error(`no ${item} x${qty}`);
+    });
+    r.defineStep('ok', () => {});
+    r.defineStep('a doc:', () => {});
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html6-'));
+    const file = join(dir, 'r.html');
+    const rep = htmlReporter({ outputFile: file });
+    const bus = new EventBus();
+    bus.on((e) => rep.onEvent(e));
+    await new Executor({ registry: r, bus }).execute(parseSpec(FEATURE_DATA, 'p.feature').scenarios);
+    await bus.flush();
+    await rep.close?.();
+    return readFileSync(file, 'utf8');
+  }
+
+  it('renders one colour-coded table per Examples block with the outline template', async () => {
+    const html = await dataHtml();
+    expect(html.match(/class="dataset"/g)).toHaveLength(2); // cheap + expensive
+    expect(html).toContain('Examples: cheap');
+    expect(html).toContain('Examples: expensive');
+    expect(html).toContain('<code class="ph">&lt;qty&gt;</code>'); // title / template placeholders
+    expect(html).toContain('Scenario template');
+    expect(html).toContain('<span class="dc" title="item: pear">pear</span>');
+    expect(html).toContain('class="dc-err">no pear x4</span>'); // failing row shows its error inline
+    expect(html).toMatch(/<span class="pill st-failed">1 failed<\/span>/);
+  });
+
+  it('renders step data tables and doc strings with the step status', async () => {
+    const html = await dataHtml();
+    expect(html).toContain('<table class="argtable" style="--st:var(--passed)"><thead><tr><th>item</th><th>price</th></tr></thead><tbody><tr><td>apple</td><td>0.50</td></tr>');
+    expect(html).toContain('class="docstring"');
+    expect(html).toContain('<span class="dmt">json</span>');
+  });
+
+  it('rows stay searchable by their data values', async () => {
+    const html = await dataHtml();
+    expect(html).toMatch(/data-text="[^"]*melon[^"]*"/);
+  });
+
+  it('plan events carry step arguments (additive schema change)', async () => {
+    const events: Array<{ type: string; scenarios?: Array<{ steps: Array<{ arg?: { kind: string } }> }> }> = [];
+    const bus = new EventBus();
+    bus.on((e) => void events.push(e as never));
+    const r = new SupportRegistry();
+    r.defineStep('the catalogue:', () => {});
+    r.defineStep('I add {int} {string}', () => {});
+    r.defineStep('ok', () => {});
+    r.defineStep('a doc:', () => {});
+    await new Executor({ registry: r, bus }).execute(parseSpec(FEATURE_DATA, 'p.feature').scenarios);
+    await bus.flush();
+    const plan = events.find((e) => e.type === 'planReady')!;
+    expect(plan.scenarios![0]!.steps[0]!.arg!.kind).toBe('dataTable');
+  });
+});
