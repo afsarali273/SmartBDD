@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { BDDX_VERSION, explainNode, parseSpecFile, planToJSON, renderPlanMermaid, renderPlanText, selectScenarios } from '@bddx/core';
 import { DEFAULTS, loadConfig, UsageError } from './config.js';
 import { watchLoop } from './watch.js';
-import { discoverSpecs, historyReport, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
+import { buildLivingDocs, discoverSpecs, historyReport, makeDataLoader, prepareRun, registerTypeScriptLoader, reportFromEvents, runBddx } from './run.js';
 import { formatValidation, validateProject } from './validate.js';
 import type { Reporter } from '@bddx/reporters';
 
@@ -17,6 +17,8 @@ Usage:
   bddx snippets [paths...] [options] Print ready-to-paste code for every undefined step (runs nothing)
   bddx validate [paths...] [options] Static checks: specs, plan, steps, hooks and unused definitions
   bddx history [--top <n>]           Flakiest and slowest scenarios from the recorded run history (config history: true)
+  bddx docs [paths...] [options]     Living documentation: the spec folders as one HTML page (README.md per folder is the intro)
+             -o reports/living-docs.html   --results <events.ndjson> (repeatable, colours scenarios)   --title <text>
   bddx report <events.ndjson...>     Build reports from event files; several files are merged (later runs win)
              -f html:reports/report.html -f junit:reports/junit.xml
   bddx plan  [paths...] [options]    Show the execution plan: groups, dependencies, locks (runs nothing)
@@ -76,6 +78,9 @@ export async function main(argv: string[]): Promise<number> {
         'dry-run': { type: 'boolean' },
         debug: { type: 'boolean' },
         watch: { type: 'boolean' },
+        output: { type: 'string', short: 'o' },
+        results: { type: 'string', multiple: true },
+        title: { type: 'string' },
         shard: { type: 'string' },
         'debug-step': { type: 'boolean' },
         inspect: { type: 'string' },
@@ -114,7 +119,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let command = 'run';
   let paths = positionals;
-  if (['run', 'list', 'snippets', 'validate', 'plan', 'report', 'history'].includes(positionals[0] ?? '')) {
+  if (['run', 'list', 'snippets', 'validate', 'plan', 'report', 'history', 'docs'].includes(positionals[0] ?? '')) {
     command = positionals[0]!;
     paths = positionals.slice(1);
   }
@@ -129,6 +134,21 @@ export async function main(argv: string[]): Promise<number> {
 
     if (command === 'list') return await list(paths, values.config, values.profile, values.tags, values.name);
     if (command === 'snippets') return await snippets(paths, values.config, values.profile, values.tags, values.name);
+    if (command === 'docs') {
+      const r = await buildLivingDocs({
+        ...(values.config ? { config: values.config } : {}),
+        ...(values.profile ? { profile: values.profile } : {}),
+        ...(paths.length ? { paths } : {}),
+        ...(values.tags ? { tags: values.tags } : {}),
+        ...(values.name ? { name: values.name } : {}),
+        ...(values.set ? { sets: values.set } : {}),
+        ...(values.results ? { results: values.results } : {}),
+        ...(values.output ? { output: values.output } : {}),
+        ...(values.title ? { title: values.title } : {}),
+      });
+      process.stdout.write(`Living documentation: ${r.features} feature(s), ${r.scenarios} scenario(s) -> ${r.file}\n`);
+      return 0;
+    }
     if (command === 'report') return await reportFromEvents(paths, values.format ?? []);
     if (command === 'history') {
       const top = values.top !== undefined ? Number(values.top) : undefined;

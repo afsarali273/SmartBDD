@@ -421,4 +421,20 @@ describe.skipIf(!built)('applySetOverrides', () => {
     expect(envelopes.some((e) => e.testStepFinished?.testStepResult.status === 'FAILED' && e.testStepFinished.testStepResult.exception)).toBe(true);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('bddx docs renders the spec folders with results and the folder README', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-docs-'));
+    const basic = join(orchestration, '..', 'basic');
+    const events = join(dir, 'e.ndjson');
+    expect(spawnSync(process.execPath, [bin, '-f', `ndjson:${events}`, '-f', 'progress'], { cwd: basic, encoding: 'utf8' }).status).toBe(0);
+    const out = join(dir, 'docs.html');
+    const r = spawnSync(process.execPath, [bin, 'docs', '--results', events, '-o', out, '--title', 'Basic shop'], { cwd: basic, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('4 feature(s), 13 scenario(s)');
+    const html = readFileSync(out, 'utf8');
+    expect(html).toContain('Basic shop');
+    expect(html).toContain('Shopping basket');
+    expect(html).toContain('13 passed');
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

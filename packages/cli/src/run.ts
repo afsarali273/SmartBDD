@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { glob } from 'tinyglobby';
 import {
@@ -21,6 +21,7 @@ import {
   createFileDataLoader,
   type LogLevel,
   type Plan,
+  type Status,
   parsePathWithLines,
   parseSpecFile,
   specFileGlobSuffix,
@@ -32,7 +33,7 @@ import {
 } from '@bddx/core';
 import { createDebugController, terminalIO, type DebugIO } from './debug.js';
 import { CancellationError, Executor, ProcessPool, TimeoutError, getGlobalRegistry, planFingerprint, type ExecuteOptions, type RetryOptions, type WorkerSetup } from '@bddx/runtime';
-import { CONSOLE_REPORTERS, createReporter, type Reporter, type ReporterSpec } from '@bddx/reporters';
+import { CONSOLE_REPORTERS, createReporter, renderLivingDocs, type Reporter, type ReporterSpec } from '@bddx/reporters';
 import { applySetOverrides, DEFAULTS, loadConfig, mergeOptions, UsageError, type BddxOptions } from './config.js';
 
 export interface RunRequest {
@@ -273,6 +274,103 @@ export function forDebugging(opts: BddxOptions): BddxOptions {
       }))
     : undefined;
   return { ...rest, workers: 1, pool: 'inline', ...(groups ? { groups } : {}) };
+}
+
+export interface DocsRequest extends Pick<RunRequest, 'cwd' | 'config' | 'profile' | 'paths' | 'tags' | 'name' | 'sets'> {
+  /** NDJSON event files whose results colour the scenarios (merged; later runs win). Default: the latest history run, if any. */
+  results?: string[];
+  output?: string;
+  title?: string;
+}
+
+/** `bddx docs`: render the spec folder tree (with README.md per folder) as one offline HTML page. */
+export async function buildLivingDocs(req: DocsRequest = {}): Promise<{ file: string; features: number; scenarios: number }> {
+  const { rootDir, opts, specs, selected } = await prepareRun({ ...req, withDeps: false });
+  const cwd = req.cwd ?? process.cwd();
+  const status = new Map<string, { status: Status | 'flaky'; ms: number }>();
+  let source: string | undefined;
+  if (req.results?.length) {
+    const streams = [];
+    for (const f of req.results) {
+      const text = await readFile(resolve(cwd, f), 'utf8').catch(() => {
+        throw new UsageError(`--results: cannot read ${f}`);
+      });
+      streams.push(parseNdjson(text));
+    }
+    for (const e of mergeEventStreams(streams)) {
+      if (e.type === 'scenarioFinished' && !e.willRetry) status.set(e.scenarioId, { status: e.flaky ? 'flaky' : e.status, ms: e.durationMs });
+    }
+    source = req.results.join(', ');
+  } else {
+    const h = historySettings(opts, rootDir);
+    const last = h ? loadHistory(h.dir, h.keep).at(-1) : undefined;
+    if (last) {
+      for (const [id, en] of Object.entries(last.scenarios)) status.set(id, { status: en.f ? 'flaky' : en.s, ms: en.d });
+      source = `last recorded run (${new Date(last.startedAt).toISOString().slice(0, 16).replace('T', ' ')})`;
+    }
+  }
+  const ids = new Set(selected.map((s) => s.id));
+  const features = specs
+    .filter((s) => s.feature)
+    .map((s) => ({
+      uri: s.uri,
+      name: s.feature!.name,
+      description: s.feature!.description,
+      tags: s.feature!.tags.map((t) => t.name),
+      scenarios: s.scenarios
+        .filter((sc) => ids.has(sc.id))
+        .map((sc) => {
+          const featureTags = new Set(s.feature!.tags.map((t) => t.name));
+          const r = status.get(sc.id);
+          return {
+            id: sc.id,
+            name: sc.name,
+            keyword: sc.keyword,
+            line: sc.line,
+            ...(sc.rule ? { rule: sc.rule.name } : {}),
+            tags: sc.tags.map((t) => t.name).filter((t) => !featureTags.has(t)),
+            steps: sc.steps.map((st) => ({ keyword: st.keyword, text: st.text, ...(st.argument ? { arg: st.argument } : {}) })),
+            ...(sc.example ? { example: sc.example.values } : {}),
+            ...(r ? { status: r.status, durationMs: r.ms } : {}),
+          };
+        }),
+    }))
+    .filter((f) => f.scenarios.length);
+  const readmes: Record<string, string> = {};
+  const dirs = new Set<string>();
+  for (const f of features) {
+    const parts = f.uri.split('/').slice(0, -1);
+    for (let i = 0; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+  }
+  for (const d of dirs) {
+    for (const name of ['README.md', 'readme.md', 'Readme.md']) {
+      const file = resolve(rootDir, d, name);
+      if (existsSync(file)) {
+        readmes[d] = await readFile(file, 'utf8');
+        break;
+      }
+    }
+  }
+  const html = renderLivingDocs({
+    title: req.title ?? (await readProjectName(rootDir)) ?? 'Living documentation',
+    generatedAt: Date.now(),
+    features,
+    readmes,
+    ...(source ? { resultsSource: source } : {}),
+  });
+  const file = resolve(cwd, req.output ?? 'reports/living-docs.html');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, html, 'utf8');
+  return { file, features: features.length, scenarios: features.reduce((n, f) => n + f.scenarios.length, 0) };
+}
+
+async function readProjectName(rootDir: string): Promise<string | undefined> {
+  try {
+    const pkg = JSON.parse(await readFile(resolve(rootDir, 'package.json'), 'utf8')) as { name?: string };
+    return pkg.name;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The whole `bddx run` pipeline, usable programmatically. */

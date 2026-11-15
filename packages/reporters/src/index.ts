@@ -11,6 +11,7 @@ export { consoleReporter, type ConsoleReporterOptions } from './console.js';
 export { junitReporter } from './junit.js';
 export { ndjsonReporter } from './ndjson.js';
 export { cucumberJsonReporter } from './cucumber-json.js';
+export { renderLivingDocs, renderMarkdown, type DocsInput, type DocsFeature, type DocsScenario } from './living-docs.js';
 export { messagesReporter, MessagesBuilder } from './messages.js';
 export { htmlReporter } from './html.js';
 export { computeStats, summaryText, passRateOf, type Stats } from './html-stats.js';
