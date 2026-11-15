@@ -33,7 +33,10 @@ Rules and guarantees:
   `@dependsOn` a later scenario in the same serial feature (a cycle).
 - `bddx plan` shows the chain as `<- previous (feature runs in file order)`.
 
-Sharing one browser page or login across the scenarios of a feature is a separate topic (feature-scoped fixtures).
+To share one browser session (context, page, login) across a serial feature, use feature-scoped fixtures
+(docs/FIXTURES.md); with Playwright: `@serial @reuseContext` on the Feature, or the plugin option
+`reuseContext: 'serial'`. In the process pool every scenario of a serial feature runs in the same worker process, so the
+session survives between them.
 
 Implementation: `core/src/plan/planner.ts` adds soft dependencies `via: 'serial:feature' | 'serial:rule'` between
 consecutive selected scenarios after selection; `PlanNode.serial` marks them. Tests: `runtime/test/serial-feature.test.ts`.

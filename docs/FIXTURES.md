@@ -30,10 +30,13 @@ declare module '@bddx/runtime' {              // types for ctx.page, ({ page }) 
 | scope | lifetime |
 |---|---|
 | `'scenario'` (default) | one per scenario attempt; a retry gets a fresh one; torn down when the scenario ends |
+| `'feature'` | one per feature in a worker process, created on first use (also from `BeforeFeature` hooks), torn down when the feature ends, after `AfterFeature`. A `@serial` feature always runs in one worker process (scheduler affinity in the process pool), so the value really is shared by all its scenarios. In a parallel feature, scenarios running at the same time get the same value |
 | `'worker'` | one per worker **process**, created on first use, torn down after `AfterWorker` hooks. Pool `inline` = one process, so concurrent scenarios share it; pool `process` = one per worker process |
 
-Fixtures may depend on other fixtures by destructuring them. Scenario fixtures may use worker fixtures, not the other way
-round. Teardown is reverse creation order, after steps, `After` hooks, `ctx.defer` and `dispose()` (fixtures outlive
+Fixtures may depend on other fixtures by destructuring them (or by reading `ctx.name` in the body). A fixture may use
+fixtures of the same or a longer scope: scenario -> feature -> worker, never the other way round.
+Feature and worker fixtures can add `afterScenario(value, { status, error, ctx })`, called at the end of every scenario
+that used them (a screenshot of a shared page for each failed scenario). Teardown is reverse creation order, after steps, `After` hooks, `ctx.defer` and `dispose()` (fixtures outlive
 everything that may use them). Teardown receives the scenario's final `status` and `error`. A failing teardown fails the
 scenario (worker: the run), reported as a hook named `fixture teardown`.
 
@@ -92,5 +95,6 @@ config folder; paths starting with `.` are relative to it. A missing plugin is a
 
 - `plugins/playwright` (`@bddx/playwright`): `playwright`, `browser` (worker), `context`, `page`, `request` (scenario);
   screenshots, traces and videos by `'off' | 'on' | 'only-on-failure'`; `-D browser= / headed= / baseURL=` overrides.
+  `reuseContext: 'serial'` (or `@reuseContext` on a `@serial` feature) gives the whole feature one context and page.
   A standalone package (not a bddx workspace): Playwright is its peer dependency, never bddx's. Offline example in
   `plugins/playwright/example`. See its README.

@@ -66,6 +66,7 @@ function fakePlaywright() {
 }
 
 async function run(options: PlaywrightPluginOptions, src: string, params: Record<string, string> = {}, workers = 1) {
+  resetGlobalRegistry();
   const fake = fakePlaywright();
   await createPlaywrightPlugin(fake.load).setup({ outputDir: '/tmp/bddx-pw-test', ...options });
   Given('I open {string}', async ({ page }, url: string) => page.goto(url));
@@ -154,5 +155,53 @@ describe('@bddx/playwright', () => {
     const { result, errors } = await run({}, TWO, { browser: 'netscape' });
     assert.equal(result.success, false);
     assert.match(errors[0]!, /browser must be chromium, firefox, webkit \(got "netscape"\)/);
+  });
+
+  const JOURNEY = (tags: string) => `${tags}
+Feature: Journey
+  Scenario: log in
+    Given I open "/login"
+  Scenario: browse
+    Given the page fails
+  Scenario: buy
+    Given I open "/buy"
+`;
+
+  it("reuseContext 'serial': one context and page for a @serial feature; per-scenario screenshot on failure", async () => {
+    const { calls, attachments, result } = await run({ reuseContext: 'serial' }, JOURNEY('@serial'));
+    assert.equal(result.success, false);
+    assert.deepEqual(calls, [
+      'launch chromium headless=true',
+      'context baseURL=',
+      'page 1',
+      'screenshot 1', // the failed scenario, from the shared page
+      'context close', // only when the feature ends
+      'close chromium',
+    ]);
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0]!.scenarioId, 'pw.feature::browse');
+  });
+
+  it('a reused context keeps the trace for the whole feature when any scenario failed', async () => {
+    const { calls } = await run({ reuseContext: 'serial', trace: 'only-on-failure', screenshot: 'off' }, JOURNEY('@serial'));
+    assert.deepEqual(calls.filter((c) => c.startsWith('trace')), ['trace start', 'trace stop traces/pw.feature.zip']);
+  });
+
+  it('@reuseContext on a @serial feature works without the option; @freshContext opts out of it', async () => {
+    const on = await run({}, JOURNEY('@serial @reuseContext'));
+    assert.equal(on.calls.filter((c) => c.startsWith('context baseURL')).length, 1);
+    const off = await run({ reuseContext: 'serial' }, JOURNEY('@serial @freshContext'));
+    assert.equal(off.calls.filter((c) => c.startsWith('context baseURL')).length, 3);
+  });
+
+  it('default (off): a @serial feature still gets a fresh context per scenario', async () => {
+    const { calls } = await run({}, JOURNEY('@serial'));
+    assert.equal(calls.filter((c) => c.startsWith('context baseURL')).length, 3);
+    assert.equal(calls.filter((c) => c === 'context close').length, 3);
+  });
+
+  it('@reuseContext without @serial is an error that says why', async () => {
+    const { errors } = await run({}, JOURNEY('@reuseContext'));
+    assert.match(errors[0]!, /@reuseContext on feature "Journey" needs @serial on the Feature/);
   });
 });

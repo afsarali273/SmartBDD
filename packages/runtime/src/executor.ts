@@ -140,6 +140,8 @@ interface OpenScope {
   remaining: number;
   hookFailed: boolean;
   members: string[];
+  /** Features: feature-scoped fixtures of this process. */
+  fixtures?: FixtureCache;
 }
 
 export class Executor implements WorkerExecutor {
@@ -271,7 +273,7 @@ export class Executor implements WorkerExecutor {
         stopReason: () => this.stopReason ?? this.cancellationReason(),
         settleGroup: (group) => this.settleGroup(group),
       },
-      { ignoreDependencyResults: !!this.opts.dryRun },
+      { ignoreDependencyResults: !!this.opts.dryRun, affinity: !!this.opts.pool },
     );
 
     if (!this.opts.dryRun) {
@@ -424,12 +426,16 @@ export class Executor implements WorkerExecutor {
     let f = this.features.get(s.uri);
     if (f) return f;
     const scope = new Scope('feature');
-    const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined) };
+    const fixtureCtx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {}, this.signal);
+    const fixtures = new FixtureCache('feature', fixtureCtx);
+    installFixtures(fixtureCtx, this.fixtureHost, undefined, fixtures);
+    const entry: OpenScope = { scope, remaining: 0, hookFailed: false, members: [], opened: Promise.resolve(undefined), fixtures };
     this.features.set(s.uri, entry);
     entry.opened = (async () => {
       if (!this.opts.remoteWorker) this.opts.bus.emit({ type: 'featureStarted', uri: s.uri, name: s.feature.name });
       if (this.opts.dryRun) return undefined;
       const ctx = this.makeFeatureContext(this.runScope, scope, s.feature, undefined, {}, signal);
+      installFixtures(ctx, this.fixtureHost, undefined, fixtures);
       const before = await this.runHooks('feature', 'before', ctx, tagFilter(s.feature.tags.map((t) => t.name)), { uri: s.uri });
       if (before.status === 'failed') {
         entry.hookFailed = true;
@@ -446,12 +452,18 @@ export class Executor implements WorkerExecutor {
     await f.opened;
     if (!this.opts.dryRun) {
       const ctx = this.makeFeatureContext(this.runScope, f.scope, feature, undefined, {});
+      if (f.fixtures) installFixtures(ctx, this.fixtureHost, undefined, f.fixtures);
       const after = await this.runHooks('feature', 'after', ctx, tagFilter(feature.tags.map((t) => t.name)), { uri: feature.uri });
       if (after.status === 'failed') f.hookFailed = true;
       const cleanupErrors = await f.scope.close();
       if (cleanupErrors.length) {
         f.hookFailed = true;
         this.emitHookLikeError('feature', 'after', 'feature cleanup (defer)', cleanupErrors[0], { uri: feature.uri });
+      }
+      const fixtureErrors = (await f.fixtures?.close()) ?? [];
+      if (fixtureErrors.length) {
+        f.hookFailed = true;
+        this.emitHookLikeError('feature', 'after', 'feature fixture teardown', fixtureErrors[0], { uri: feature.uri });
       }
     }
     if (f.hookFailed) this.runFailed = true;
@@ -821,7 +833,8 @@ export class Executor implements WorkerExecutor {
 
     const ctx = this.makeStepContext(runScope, featureScope, scope, scenario, attempt, ids, groupStores, signal);
     const fixtures = new FixtureCache('scenario');
-    installFixtures(ctx, this.fixtureHost, fixtures);
+    installFixtures(ctx, this.fixtureHost, fixtures, this.features.get(scenario.uri)?.fixtures);
+    if (node?.serial) ctx.scenario.serial = node.serial;
     const statuses: Status[] = [];
     let error: unknown;
     let skipReason: string | undefined;
@@ -876,7 +889,7 @@ export class Executor implements WorkerExecutor {
       }
     }
     // Fixtures outlive everything that may use them (steps, After hooks, ctx.defer, dispose()).
-    const fixtureErrors = await fixtures.close({ status: worstStatus(statuses), ...(error !== undefined ? { error } : {}) });
+    const fixtureErrors = await fixtures.close({ status: worstStatus(statuses), ...(error !== undefined ? { error } : {}) }, ctx);
     if (fixtureErrors.length) {
       statuses.push('failed');
       error ??= fixtureErrors[0];

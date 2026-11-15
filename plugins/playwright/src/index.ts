@@ -14,6 +14,8 @@
  *   browser     worker    launched on first use, one per worker process (pool 'inline': shared by the run)
  *   context     scenario  a fresh BrowserContext per scenario attempt (isolated cookies/storage); trace and video
  *   page        scenario  a page in that context; screenshot at the end per `screenshot`
+ *               With `reuseContext` a @serial feature gets ONE context and page for all its scenarios instead
+ *               (sharedContext / sharedPage, feature scoped): log in once, keep cookies and the open page.
  *   request     scenario  an APIRequestContext (no browser is launched for API-only scenarios)
  *
  * Run-time overrides with -D: `-D browser=firefox`, `-D headed=true`, `-D baseURL=https://staging.example.com`.
@@ -30,7 +32,7 @@ import type {
   Page,
   Video,
 } from 'playwright';
-import { defineFixture, definePlugin, type BddxPlugin, type StepContext } from '@bddx/runtime';
+import { defineFixture, definePlugin, type BddxPlugin, type FeatureContext, type RunContext, type StepContext } from '@bddx/runtime';
 
 type PlaywrightModule = typeof import('playwright');
 /** Options of `playwright.request.newContext()`. */
@@ -43,6 +45,9 @@ declare module '@bddx/runtime' {
     context: BrowserContext;
     page: Page;
     request: APIRequestContext;
+    /** The context shared by a feature's scenarios when it reuses one (see `reuseContext`). */
+    sharedContext: BrowserContext;
+    sharedPage: Page;
   }
 }
 
@@ -75,6 +80,13 @@ export interface PlaywrightPluginOptions {
   video?: ArtifactMode;
   /** Where traces and videos go, relative to the working directory. Default 'reports/playwright'. */
   outputDir?: string;
+  /**
+   * Reuse one browser context and page for every scenario of a @serial feature (one session: cookies, storage and the
+   * open page carry over; the browser is never closed in between). 'off' (default): a fresh context per scenario.
+   * 'serial': every @serial feature reuses. Per feature: `@reuseContext` (needs @serial) / `@freshContext`.
+   * The trace and video then cover the whole feature; screenshots are still taken per failed scenario.
+   */
+  reuseContext?: 'off' | 'serial';
 }
 
 const keep = (mode: ArtifactMode | undefined, status: string | undefined) => mode === 'on' || (mode === 'only-on-failure' && status === 'failed');
@@ -111,60 +123,110 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
         { scope: 'worker', teardown: (b) => b.close() },
       );
 
+      // ---- contexts: one per scenario, or one per @serial feature when it reuses
+      const openContext = async (browser: Browser, ctx: RunContext, title: string): Promise<BrowserContext> => {
+        const baseURL = baseURLOf(ctx);
+        const context = await browser.newContext({
+          ...o.context,
+          ...(baseURL ? { baseURL } : {}),
+          ...(video !== 'off' ? { recordVideo: { dir: join(outputDir, 'videos'), ...o.context?.recordVideo } } : {}),
+        });
+        if (o.actionTimeoutMs !== undefined) context.setDefaultTimeout(o.actionTimeoutMs);
+        if (o.navigationTimeoutMs !== undefined) context.setDefaultNavigationTimeout(o.navigationTimeoutMs);
+        if (trace !== 'off') await context.tracing.start({ screenshots: true, snapshots: true, sources: true, title });
+        return context;
+      };
+      const closeContext = async (context: BrowserContext, status: string | undefined, name: string, ctx: RunContext) => {
+        if (trace !== 'off') {
+          if (keep(trace, status)) {
+            const path = join(outputDir, 'traces', `${name}.zip`);
+            await context.tracing.stop({ path });
+            ctx.log.info(`Playwright trace: ${path}  (npx playwright show-trace "${path}")`);
+          } else {
+            await context.tracing.stop();
+          }
+        }
+        const videos = video !== 'off' ? context.pages().flatMap((p) => (p.video() ? [p.video() as Video] : [])) : [];
+        await context.close();
+        for (const [i, v] of videos.entries()) {
+          if (keep(video, status)) {
+            const path = join(outputDir, 'videos', `${name}${videos.length > 1 ? `-${i + 1}` : ''}.webm`);
+            await v.saveAs(path);
+            await v.delete();
+            ctx.log.info(`Playwright video: ${path}`);
+          } else {
+            await v.delete();
+          }
+        }
+      };
+      const screenshotTo = async (page: Page, status: string | undefined, ctx: RunContext) => {
+        if (!keep(screenshot, status) || page.isClosed()) return;
+        try {
+          ctx.attach(await page.screenshot({ fullPage: true }), 'image/png', `screenshot ${status ?? ''}`.trim());
+        } catch (e) {
+          ctx.log.warn(`@bddx/playwright: could not take a screenshot: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      };
+
+      const shared = new WeakSet<object>();
+      const featureFailed = new WeakMap<object, boolean>();
+      const contextOf = new WeakMap<Page, BrowserContext>();
+      /** Does this scenario use the feature's shared context? */
+      const reuses = (ctx: StepContext): boolean => {
+        const tags = ctx.featureInfo.tags.map((t) => t.name);
+        if (tags.includes('@freshContext')) return false;
+        const asked = tags.includes('@reuseContext');
+        if (asked && ctx.scenario.serial !== 'feature') {
+          throw new Error(
+            `@reuseContext on feature "${ctx.featureInfo.name}" needs @serial on the Feature: scenarios sharing one browser context must run one at a time, in order`,
+          );
+        }
+        return asked || (o.reuseContext === 'serial' && ctx.scenario.serial === 'feature');
+      };
+
       defineFixture(
-        'context',
-        async (ctx) => {
-          const { browser } = ctx;
-          const baseURL = baseURLOf(ctx);
-          const context = await browser.newContext({
-            ...o.context,
-            ...(baseURL ? { baseURL } : {}),
-            ...(video !== 'off' ? { recordVideo: { dir: join(outputDir, 'videos'), ...o.context?.recordVideo } } : {}),
-          });
-          if (o.actionTimeoutMs !== undefined) context.setDefaultTimeout(o.actionTimeoutMs);
-          if (o.navigationTimeoutMs !== undefined) context.setDefaultNavigationTimeout(o.navigationTimeoutMs);
-          if (trace !== 'off') await context.tracing.start({ screenshots: true, snapshots: true, sources: true, title: ctx.scenario.name });
+        'sharedContext',
+        async (ctx: FeatureContext) => {
+          const context = await openContext(await ctx.fixture('browser'), ctx, ctx.featureInfo.name);
+          shared.add(context);
           return context;
         },
         {
-          teardown: async (context, { status, ctx }) => {
-            const sctx = ctx as StepContext;
-            const name = artifactName(sctx);
-            if (trace !== 'off') {
-              if (keep(trace, status)) {
-                const path = join(outputDir, 'traces', `${name}.zip`);
-                await context.tracing.stop({ path });
-                sctx.log.info(`Playwright trace: ${path}  (npx playwright show-trace "${path}")`);
-              } else {
-                await context.tracing.stop();
-              }
-            }
-            const videos = video !== 'off' ? context.pages().flatMap((p) => (p.video() ? [p.video() as Video] : [])) : [];
-            await context.close();
-            for (const [i, v] of videos.entries()) {
-              if (keep(video, status)) {
-                const path = join(outputDir, 'videos', `${name}${videos.length > 1 ? `-${i + 1}` : ''}.webm`);
-                await v.saveAs(path);
-                await v.delete();
-                sctx.log.info(`Playwright video: ${path}`);
-              } else {
-                await v.delete();
-              }
-            }
+          scope: 'feature',
+          afterScenario: (context, { status }) => {
+            if (status === 'failed') featureFailed.set(context, true);
+          },
+          teardown: (context, { ctx }) =>
+            closeContext(context, featureFailed.get(context) ? 'failed' : 'passed', slug((ctx as FeatureContext).featureInfo.uri), ctx),
+        },
+      );
+      defineFixture(
+        'sharedPage',
+        async (ctx: FeatureContext) => {
+          const context = await ctx.fixture('sharedContext');
+          const page = await context.newPage();
+          shared.add(page);
+          contextOf.set(page, context);
+          return page;
+        },
+        {
+          scope: 'feature',
+          afterScenario: async (page, { status, ctx }) => {
+            const context = contextOf.get(page);
+            if (status === 'failed' && context) featureFailed.set(context, true);
+            await screenshotTo(page, status, ctx);
           },
         },
       );
 
-      defineFixture('page', ({ context }) => context.newPage(), {
-        teardown: async (page, { status, ctx }) => {
-          if (!keep(screenshot, status) || page.isClosed()) return;
-          try {
-            const png = await page.screenshot({ fullPage: true });
-            ctx.attach(png, 'image/png', `screenshot ${status ?? ''}`.trim());
-          } catch (e) {
-            ctx.log.warn(`@bddx/playwright: could not take a screenshot: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        },
+      defineFixture(
+        'context',
+        async (ctx: StepContext) => (reuses(ctx) ? ctx.fixture('sharedContext') : openContext(await ctx.fixture('browser'), ctx, ctx.scenario.name)),
+        { teardown: (context, { status, ctx }) => (shared.has(context) ? undefined : closeContext(context, status, artifactName(ctx as StepContext), ctx)) },
+      );
+
+      defineFixture('page', async (ctx: StepContext) => (reuses(ctx) ? ctx.fixture('sharedPage') : (await ctx.fixture('context')).newPage()), {
+        teardown: (page, { status, ctx }) => (shared.has(page) ? undefined : screenshotTo(page, status, ctx)),
       });
 
       defineFixture(

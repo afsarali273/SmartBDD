@@ -23,6 +23,7 @@ import type {
   StepOptions,
   RunContext,
   StepContext,
+  FeatureContext,
 } from './types.js';
 import type { HookKind, HookLevel } from '@bddx/core';
 
@@ -123,6 +124,11 @@ export function defineFixture<K extends string, T = FixtureType<K>>(
   name: K,
   setup: (ctx: RunContext) => T | Promise<T>,
   options: FixtureOptions<T> & { scope: 'worker' },
+): void;
+export function defineFixture<K extends string, T = FixtureType<K>>(
+  name: K,
+  setup: (ctx: FeatureContext) => T | Promise<T>,
+  options: FixtureOptions<T> & { scope: 'feature' },
 ): void;
 export function defineFixture<K extends string, T = FixtureType<K>>(
   name: K,

@@ -57,4 +57,15 @@ describe('fixtures + plugins end to end (groups, dependencies, retry, workers)',
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('plugin "@bddx/does-not-exist" not found');
   });
+
+  it('a @serial feature keeps one feature-scoped session in one worker process (process pool, 2 workers)', () => {
+    for (let i = 0; i < 3; i++) {
+      const { r, lines, count } = runProject(['serial-features', '--pool', 'process', '-w', '2']);
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(count(/^session open/)).toBe(1);
+      expect(count(/^session close/)).toBe(1);
+      expect(count(/^session after .* passed/)).toBe(4);
+      expect(new Set(lines.map((l) => l.split(' ').at(-1))).size).toBe(1); // one pid
+    }
+  });
 });

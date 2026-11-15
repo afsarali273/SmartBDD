@@ -42,7 +42,8 @@ Add `import '@bddx/playwright';` (or `"types": ["@bddx/playwright"]` in tsconfig
 | `page` | scenario | a page in that context; screenshot at the end |
 | `request` | scenario | `APIRequestContext` for API tests; never launches a browser |
 
-Scenarios that use none of these start nothing. Retries get a fresh context and page. Groups, dependencies, locks,
+With `reuseContext`, a `@serial` feature uses one context and page for all its scenarios instead (feature-scoped
+`sharedContext` / `sharedPage`); see below. Scenarios that use none of these start nothing. Retries get a fresh context and page. Groups, dependencies, locks,
 `--pool process`, `--shard` and `--watch` work as usual.
 
 ## Options
@@ -60,6 +61,27 @@ Scenarios that use none of these start nothing. Retries get a fresh context and 
 | `trace` | `'off'` | same values; saved under `outputDir/traces`, path logged (`npx playwright show-trace <file>`) |
 | `video` | `'off'` | same values; saved under `outputDir/videos` |
 | `outputDir` | `'reports/playwright'` | relative to the working directory |
+| `reuseContext` | `'off'` | `'serial'`: every `@serial` feature shares one context and page |
+
+## One browser session per feature
+
+```gherkin
+@serial @reuseContext
+Feature: Checkout journey
+  Scenario: log in             # opens the context and page
+  Scenario: add to basket      # same page, still logged in
+  Scenario: pay                # same page
+```
+
+- Needs `@serial` on the Feature (sharing a page only works one scenario at a time); `@reuseContext` without it is an
+  error. `reuseContext: 'serial'` turns it on for every serial feature; `@freshContext` opts one out.
+- The browser stays open; the context and page are closed when the feature ends. In `--pool process` the whole feature
+  runs in one worker process, so nothing is lost between scenarios.
+- Screenshots are still per failed scenario (from the shared page). The trace and video cover the whole feature and are
+  kept when any of its scenarios failed (`only-on-failure`).
+- A retried scenario continues on the same page, in whatever state the failed attempt left it.
+- Selecting one scenario of the feature (`-t`, `file:line`) runs it alone on a new shared session: it does not replay the
+  earlier scenarios, so make it able to start on its own or run the whole feature.
 
 ## Example
 

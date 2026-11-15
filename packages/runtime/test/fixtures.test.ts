@@ -224,3 +224,57 @@ describe('inject()', () => {
     expect(() => inject('page')).toThrow(/field initializer or constructor/);
   });
 });
+
+describe('feature-scoped fixtures', () => {
+  it('one value per feature, usable in BeforeFeature, afterScenario per scenario, torn down after AfterFeature', async () => {
+    const r = new SupportRegistry();
+    const log: string[] = [];
+    let n = 0;
+    r.defineFixture('session', ({ featureInfo }: any) => (log.push(`open ${featureInfo.name}`), { id: ++n, feature: featureInfo.name }), {
+      scope: 'feature',
+      afterScenario: (s: any, { status, ctx }) => void log.push(`after ${(ctx as StepContext).scenario.name} ${status} on ${s.id}`),
+      teardown: (s: any) => void log.push(`close ${s.id}`),
+    });
+    r.defineHook('feature', 'before', {}, (({ session }: any) => void log.push(`BeforeFeature uses ${session.id}`)) as never);
+    r.defineHook('feature', 'after', {}, (() => void log.push('AfterFeature')) as never);
+    r.defineStep('use the session', ({ session, scenario }: any) => void log.push(`${scenario.name} on ${session.id}${scenario.serial ? ' (serial)' : ''}`));
+    r.defineStep('fail', () => {
+      throw new Error('x');
+    });
+    const src = `@serial\nFeature: A\n  Scenario: a1\n    Given use the session\n  Scenario: a2\n    Given use the session\n    And fail\n`;
+    const src2 = `Feature: B\n  Scenario: b1\n    Given use the session\n`;
+    const scenarios = [...parseSpec(src, 'a.feature').scenarios, ...parseSpec(src2, 'b.feature').scenarios];
+    const plan = buildPlan(scenarios, scenarios, {});
+    await new Executor({ registry: r, bus: new EventBus(), plan }).execute(scenarios);
+    expect(log).toEqual([
+      'open A',
+      'BeforeFeature uses 1',
+      'a1 on 1 (serial)',
+      'after a1 passed on 1',
+      'a2 on 1 (serial)',
+      'after a2 failed on 1',
+      'AfterFeature',
+      'close 1',
+      'open B',
+      'BeforeFeature uses 2',
+      'b1 on 2',
+      'after b1 passed on 2',
+      'AfterFeature',
+      'close 2',
+    ]);
+  });
+
+  it('scope rules: worker fixtures cannot use feature ones, feature fixtures cannot use scenario ones', async () => {
+    const r = new SupportRegistry();
+    r.defineFixture('scen', () => 1);
+    r.defineFixture('feat', ({ scen }: any) => scen, { scope: 'feature' });
+    r.defineFixture('feat2', () => 2, { scope: 'feature' });
+    r.defineFixture('wrk', ({ feat2 }: any) => feat2, { scope: 'worker' });
+    r.defineStep('feat', ({ feat }: any) => feat);
+    r.defineStep('wrk', ({ wrk }: any) => wrk);
+    expect(() => r.defineFixture('bad', () => 1, { afterScenario: () => {} })).toThrow(/afterScenario is for feature and worker/);
+    const { failures } = await run(r, 'Feature: F\n  Scenario: a\n    Given feat\n  Scenario: b\n    Given wrk\n');
+    expect(failures[0]).toMatch(/"scen" is scenario-scoped and cannot be used by the feature fixture feat/);
+    expect(failures[1]).toMatch(/"feat2" is feature-scoped and cannot be used by the worker fixture wrk/);
+  });
+});

@@ -121,7 +121,10 @@ export class SupportRegistry {
     if (RESERVED.has(name)) throw new Error(`Fixture name "${name}" is reserved: ctx.${name} already exists`);
     if (typeof setup !== 'function') throw new Error(`Fixture "${name}" needs a setup function`);
     const scope = options.scope ?? 'scenario';
-    if (scope !== 'scenario' && scope !== 'worker') throw new Error(`Fixture "${name}": scope must be 'scenario' or 'worker' (got "${String(scope)}")`);
+    if (scope !== 'scenario' && scope !== 'feature' && scope !== 'worker') {
+      throw new Error(`Fixture "${name}": scope must be 'scenario', 'feature' or 'worker' (got "${String(scope)}")`);
+    }
+    if (options.afterScenario && scope === 'scenario') throw new Error(`Fixture "${name}": afterScenario is for feature and worker fixtures (use teardown)`);
     const existing = this.fixtureDefinitions.get(name);
     if (existing) {
       throw new Error(`Fixture "${name}" is defined twice${existing.location ? ` (first at ${existing.location})` : ''}${location ? ` (again at ${location})` : ''}`);
@@ -132,6 +135,7 @@ export class SupportRegistry {
       setup: setup as FixtureDefinition['setup'],
       deps: destructuredNames(setup as never),
       ...(options.teardown ? { teardown: options.teardown as FixtureDefinition['teardown'] } : {}),
+      ...(options.afterScenario ? { afterScenario: options.afterScenario as FixtureDefinition['afterScenario'] } : {}),
       ...(location ? { location } : {}),
     };
     this.fixtureDefinitions.set(name, def);

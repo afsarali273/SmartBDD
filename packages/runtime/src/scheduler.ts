@@ -31,6 +31,11 @@ export interface SchedulerCallbacks {
 }
 
 export interface ScheduleOptions {
+  /**
+   * Keep every scenario of a @serial feature (or rule) on the worker slot its first scenario used. Set by the executor
+   * for the process pool, where a slot is a process: feature-scoped fixtures (a shared browser session) then survive.
+   */
+  affinity?: boolean;
   /** Dry run: dependency results do not cause skips. */
   ignoreDependencyResults?: boolean;
 }
@@ -73,7 +78,25 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
     if (pg.mode === 'serial') return 1;
     return pg.workers ?? Infinity;
   };
+  /** Serial chain key -> slot it is pinned to (options.affinity). */
+  const pinned = new Map<string, string>();
+  const chainKey = (n: PlanNode): string | undefined =>
+    !options.affinity || !n.serial ? undefined : n.serial === 'feature' ? `f:${n.scenario.uri}` : `r:${n.scenario.uri}:${n.scenario.rule?.id ?? ''}`;
+  const chainLeft = new Map<string, number>();
+  for (const n of plan.nodes) {
+    const k = chainKey(n);
+    if (k) chainLeft.set(k, (chainLeft.get(k) ?? 0) + 1);
+  }
+  const slotFor = (n: PlanNode): string | undefined => {
+    const key = chainKey(n);
+    const pin = key ? pinned.get(key) : undefined;
+    if (pin) return freeSlots.includes(pin) ? pin : undefined;
+    // An unpinned node prefers a slot no serial chain is waiting for.
+    const busy = new Set(pinned.values());
+    return freeSlots.find((s) => !busy.has(s)) ?? freeSlots[0];
+  };
   const canStart = (n: PlanNode) => {
+    if (slotFor(n) === undefined) return false;
     if (exclusiveRunning) return false;
     if (n.exclusive && running.size > 0) return false;
     if (n.locks.some((l) => (heldLocks.get(l) ?? 0) > 0)) return false;
@@ -81,7 +104,10 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
   };
 
   const start = (n: PlanNode) => {
-    const slot = freeSlots.shift()!;
+    const slot = slotFor(n)!;
+    freeSlots.splice(freeSlots.indexOf(slot), 1);
+    const key = chainKey(n);
+    if (key && !pinned.has(key)) pinned.set(key, slot);
     pending.delete(n.id);
     for (const l of n.locks) heldLocks.set(l, (heldLocks.get(l) ?? 0) + 1);
     for (const g of n.groups) groupRunning.set(g, (groupRunning.get(g) ?? 0) + 1);
@@ -97,6 +123,7 @@ export async function schedule(plan: Plan, cb: SchedulerCallbacks, options: Sche
       .catch((): Status => 'failed')
       .then((status) => {
         results.set(n.id, status);
+        if (key && (chainLeft.set(key, chainLeft.get(key)! - 1), chainLeft.get(key)! <= 0)) pinned.delete(key);
         for (const l of n.locks) heldLocks.set(l, heldLocks.get(l)! - 1);
         for (const g of n.groups) groupRunning.set(g, groupRunning.get(g)! - 1);
         if (n.exclusive) exclusiveRunning = false;

@@ -18,6 +18,8 @@ export interface ScenarioInfo {
   example?: Record<string, string>;
   /** 1 for the first attempt; increases with retries (phase 4). */
   attempt: number;
+  /** Set when the scenario runs in file order within its feature (@serial Feature, featureMode) or rule (@serial Rule). */
+  serial?: 'feature' | 'rule';
 }
 
 export interface CurrentStepInfo {

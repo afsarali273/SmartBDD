@@ -9,6 +9,10 @@
  *
  * Scopes:
  *   'scenario' (default)  one value per scenario attempt (a retry gets a fresh one); torn down when it ends.
+ *   'feature'             one value per feature in a worker process, created on first use, torn down when the feature
+ *                         ends (after AfterFeature hooks). Share a browser session across a @serial feature with it;
+ *                         a @serial feature always runs in one worker process. In a parallel feature, scenarios
+ *                         running at the same time get the same value: only share things that tolerate that.
  *   'worker'              one value per worker PROCESS, created on first use, torn down after AfterWorker hooks.
  *                         With pool 'inline' the run is one process, so concurrent scenarios share it (a browser,
  *                         a connection pool); with pool 'process' every worker process has its own.
@@ -30,12 +34,17 @@ import type { RunContext, StepContext } from './types.js';
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 export interface Fixtures {}
 
-export type FixtureScope = 'scenario' | 'worker';
+export type FixtureScope = 'scenario' | 'feature' | 'worker';
 
 export interface FixtureOptions<T> {
   scope?: FixtureScope;
   /** Runs when the scope ends (LIFO: dependents are torn down before what they depend on). */
   teardown?: (value: T, ctx: FixtureTeardownContext) => unknown | Promise<unknown>;
+  /**
+   * Feature and worker fixtures: called at the end of every scenario that used the fixture, with that scenario's
+   * status and context (e.g. a screenshot of a shared page when the scenario failed). Runs before scenario teardowns.
+   */
+  afterScenario?: (value: T, ctx: FixtureTeardownContext) => unknown | Promise<unknown>;
 }
 
 export interface FixtureTeardownContext {
@@ -54,6 +63,7 @@ export interface FixtureDefinition {
   scope: FixtureScope;
   setup: (ctx: never) => unknown;
   teardown?: (value: never, ctx: FixtureTeardownContext) => unknown;
+  afterScenario?: (value: never, ctx: FixtureTeardownContext) => unknown;
   /** Fixtures destructured in the setup's first parameter. */
   deps: string[];
   location?: string;
@@ -175,8 +185,15 @@ export class FixtureCache {
   private readonly entries = new Map<string, Entry>();
   private readonly order: Array<{ def: FixtureDefinition; value: unknown; ctx: RunContext | StepContext }> = [];
   private closed = false;
+  /** Scenario caches: longer-lived fixtures this scenario used that want an afterScenario call. */
+  private readonly touched = new Map<string, { def: FixtureDefinition; value: unknown }>();
 
-  constructor(readonly scope: FixtureScope) {}
+  /** @param context  for feature caches: the feature context their setups and teardowns receive. */
+  constructor(readonly scope: FixtureScope, readonly context?: RunContext) {}
+
+  touch(def: FixtureDefinition, value: unknown): void {
+    if (def.afterScenario && !this.touched.has(def.name)) this.touched.set(def.name, { def, value });
+  }
 
   has(name: string): boolean {
     return !!this.entries.get(name)?.ready;
@@ -223,11 +240,21 @@ export class FixtureCache {
   }
 
   /** Tear down in reverse creation order. Returns the errors. */
-  async close(info: Omit<FixtureTeardownContext, 'ctx'> = {}): Promise<unknown[]> {
+  async close(info: Omit<FixtureTeardownContext, 'ctx'> = {}, scenarioCtx?: RunContext | StepContext): Promise<unknown[]> {
     this.closed = true;
     // wait for setups still in flight, so nothing leaks
     await Promise.allSettled([...this.entries.values()].flatMap((e) => (e.promise ? [e.promise] : [])));
     const errors: unknown[] = [];
+    if (scenarioCtx) {
+      for (const { def, value } of this.touched.values()) {
+        try {
+          await def.afterScenario!(value as never, { ...info, ctx: scenarioCtx });
+        } catch (e) {
+          errors.push(e);
+        }
+      }
+      this.touched.clear();
+    }
     for (const { def, value, ctx } of this.order.reverse()) {
       if (!def.teardown) continue;
       try {
@@ -253,8 +280,9 @@ export interface FixtureHost {
 
 const HOST = Symbol.for('bddx.fixtures.host');
 const SCENARIO = Symbol.for('bddx.fixtures.scenario');
+const FEATURE = Symbol.for('bddx.fixtures.feature');
 
-type Ctx = (RunContext | StepContext) & { [HOST]?: FixtureHost; [SCENARIO]?: FixtureCache };
+type Ctx = (RunContext | StepContext) & { [HOST]?: FixtureHost; [SCENARIO]?: FixtureCache; [FEATURE]?: FixtureCache };
 
 function host(ctx: Ctx): FixtureHost {
   const h = ctx[HOST];
@@ -271,24 +299,36 @@ function definition(h: FixtureHost, name: string, chain: string[]): FixtureDefin
   return def;
 }
 
+const SCOPE_RANK: Record<FixtureScope, number> = { worker: 0, feature: 1, scenario: 2 };
+
 /** Create (or get) a fixture and everything it depends on. Returns a value or a promise. */
-export function resolveFixture(ctx: Ctx, name: string, chain: string[] = []): unknown {
+export function resolveFixture(ctx: Ctx, name: string, chain: string[] = [], from?: FixtureScope): unknown {
   const h = host(ctx);
   const def = definition(h, name, chain);
   if (chain.includes(name)) throw new Error(`Fixture cycle: ${[...chain, name].join(' -> ')}`);
-  const scenarioCache = ctx[SCENARIO];
-  if (def.scope === 'scenario' && !scenarioCache) {
-    throw new Error(`Fixture "${name}" is scenario-scoped and cannot be used here${chain.length ? ` (needed by worker fixture ${chain.join(' -> ')})` : ' (run, worker, group or feature hook)'}`);
+  if (from && SCOPE_RANK[def.scope] > SCOPE_RANK[from]) {
+    throw new Error(`Fixture "${name}" is ${def.scope}-scoped and cannot be used by the ${from} fixture ${chain.join(' -> ')}`);
   }
-  const target = def.scope === 'worker' ? h.worker : scenarioCache!;
-  if (target.has(name)) return target.peek(name);
-  const setupCtx: Ctx = def.scope === 'worker' ? h.workerContext() : ctx;
-  return target.get(def, setupCtx as RunContext, () => {
+  const target = def.scope === 'worker' ? h.worker : def.scope === 'feature' ? ctx[FEATURE] : ctx[SCENARIO];
+  if (!target) {
+    throw new Error(
+      `Fixture "${name}" is ${def.scope}-scoped and cannot be used here (${def.scope === 'scenario' ? 'run, worker, group or feature hook' : 'run, worker or group hook'})`,
+    );
+  }
+  const scenarioCache = ctx[SCENARIO];
+  const touch = (v: unknown) => {
+    if (scenarioCache && def.scope !== 'scenario') scenarioCache.touch(def, v);
+    return v;
+  };
+  if (target.has(name)) return touch(target.peek(name));
+  const setupCtx: Ctx = def.scope === 'worker' ? h.workerContext() : def.scope === 'feature' ? ((target.context as Ctx | undefined) ?? ctx) : ctx;
+  const out = target.get(def, setupCtx as RunContext, () => {
     const deps = def.deps.filter((d) => h.definitions.has(d));
-    const pending = deps.map((d) => resolveFixture(setupCtx, d, [...chain, name]));
+    const pending = deps.map((d) => resolveFixture(setupCtx, d, [...chain, name], def.scope));
     const run = () => (def.setup as (c: unknown) => unknown)(setupCtx);
     return pending.some((p) => p instanceof Promise) ? Promise.all(pending).then(run) : run();
   });
+  return out instanceof Promise ? out.then(touch) : touch(out);
 }
 
 /** Before calling `fn(ctx, ...)`: create the fixtures it destructures. Returns undefined when nothing needs awaiting. */
@@ -313,11 +353,12 @@ export function readFixture(ctx: Ctx, name: string): unknown {
 
 /**
  * Give a context access to fixtures: `ctx.<name>` getters, `ctx.fixture(name)`.
- * Pass a scenario cache for step contexts (scenario fixtures), none for run/worker/group/feature contexts.
+ * Step contexts get the scenario and feature caches; feature-hook contexts the feature cache; run/worker/group none.
  */
-export function installFixtures(ctx: RunContext | StepContext, h: FixtureHost, scenario?: FixtureCache): void {
+export function installFixtures(ctx: RunContext | StepContext, h: FixtureHost, scenario?: FixtureCache, feature?: FixtureCache): void {
   Object.defineProperty(ctx, HOST, { value: h, enumerable: false, configurable: true });
   if (scenario) Object.defineProperty(ctx, SCENARIO, { value: scenario, enumerable: false, configurable: true });
+  if (feature) Object.defineProperty(ctx, FEATURE, { value: feature, enumerable: false, configurable: true });
   Object.defineProperty(ctx, 'fixture', {
     enumerable: false,
     configurable: true,
