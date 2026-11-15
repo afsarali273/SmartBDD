@@ -330,7 +330,7 @@ export function renderHtml(d: ReportData): string {
                 ? `<span class="dc-err">${esc(firstErr.message.split('\n')[0] ?? '')}</span>`
                 : '';
           const dataSummary = ds
-            ? `<summary><span class="ico">${ICON[status]}</span><span class="dc dc-row">${esc(String(sc.example!.sourceRow ?? sc.example!.index))}</span>${ds.columns
+            ? `<summary><span class="pin"><span class="ico">${ICON[status]}</span><span class="dc dc-row">${esc(String(sc.example!.sourceRow ?? sc.example!.index))}</span></span>${ds.columns
                 .map((c) => `<span class="dc" data-label="${esc(c)}" title="${esc(`${c}: ${sc.example!.values[c] ?? ''}`)}">${esc(sc.example!.values[c] ?? '')}</span>`)
                 .join('')}<span class="dc dc-flags">${flags}${histHtml}</span><span class="meta">${ms(r?.durationMs)}${started ? ` · ${esc(started.workerId)}` : ''}</span><button class="perma" type="button" data-link="${anchor(sc.id)}" title="Copy link to this scenario" aria-label="Copy link to this scenario">🔗</button>${rowNote}</summary>`
             : '';

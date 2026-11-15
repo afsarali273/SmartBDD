@@ -11,6 +11,9 @@ import type { PlannedScenario, Status, StepArgument } from '@bddx/core';
 import { esc, fmtMs } from './html-views.js';
 import { stackBar, STATUSES, zeroCounts } from './html-stats.js';
 
+/** Datasets with more parameters than this scroll horizontally on every screen size. */
+export const WIDE_COLUMNS = 5;
+
 export interface Dataset {
   key: string;
   rows: PlannedScenario[];
@@ -22,6 +25,8 @@ export interface Dataset {
   /** Data file (with sheet/selector) or "Examples: <block name>". */
   source: string;
   fromFile: boolean;
+  /** Many columns: keep the table layout and scroll sideways (also on phones) instead of stacking each row. */
+  wide: boolean;
   /** CSS grid-template-columns shared by the header and every row. */
   template: string;
   minWidth: number;
@@ -66,7 +71,8 @@ export function buildDatasets(plan: readonly PlannedScenario[]): Map<string, Dat
       templateSteps: rows[0]!.steps.map((st) => `${st.keyword}${deriveTitle(st.text, first.values)}`),
       source: fromFile ? first.source! : `Examples${first.name ? `: ${first.name}` : ''}`,
       fromFile,
-      template: ['22px', '46px', ...columns.map(() => 'minmax(90px,1fr)'), '100px', '130px', '26px'].join(' '),
+      wide: columns.length > WIDE_COLUMNS,
+      template: ['78px', ...columns.map(() => 'minmax(90px,1fr)'), '100px', '130px', '26px'].join(' '),
       minWidth: 140 + columns.length * 100 + 270,
     };
     for (const r of rows) byScenario.set(r.id, ds);
@@ -91,9 +97,9 @@ export function renderDatasetOpen(ds: Dataset, statusOf: (id: string) => Status,
     .map((s) => `<span class="pill st-${s}">${counts[s]} ${s}</span>`)
     .join('');
   const heads = ds.columns.map((c) => `<span class="dc" title="${esc(c)}">${esc(c)}</span>`).join('');
-  return `<section class="dataset"><div class="dset-head"><span class="dset-ico" aria-hidden="true">▦</span><b class="dset-title">${withPlaceholders(ds.title)}</b><span class="chip src" title="${ds.fromFile ? 'data source' : 'examples block'}">${ds.fromFile ? '📄 ' : ''}${esc(ds.source)}</span><span class="dset-n">${ds.rows.length} row${ds.rows.length === 1 ? '' : 's'}</span><span class="dset-pills">${pills}</span><span class="dset-bar">${stackBar(counts, ds.rows.length)}</span><span class="dset-time">${esc(fmtMs(total))}</span></div>
+  return `<section class="dataset"><div class="dset-head"><span class="dset-ico" aria-hidden="true">▦</span><b class="dset-title">${withPlaceholders(ds.title)}</b><span class="chip src" title="${ds.fromFile ? 'data source' : 'examples block'}">${ds.fromFile ? '📄 ' : ''}${esc(ds.source)}</span><span class="dset-n">${ds.rows.length} row${ds.rows.length === 1 ? '' : 's'}${ds.wide ? ` · ${ds.columns.length} columns` : ''}</span>${ds.wide ? '<span class="dset-scroll" title="scroll sideways to see all columns">↔ scroll sideways</span>' : ''}<span class="dset-pills">${pills}</span><span class="dset-bar">${stackBar(counts, ds.rows.length)}</span><span class="dset-time">${esc(fmtMs(total))}</span></div>
 <details class="dtemplate"><summary>Scenario template</summary><ol>${ds.templateSteps.map((t) => `<li>${withPlaceholders(t)}</li>`).join('')}</ol></details>
-<div class="dgrid" style="--tpl:${ds.template};--minw:${ds.minWidth}px"><div class="dhead"><span></span><span class="dc" title="${ds.fromFile ? 'row in the data file' : 'row in the examples'}">#</span>${heads}<span></span><span class="dc">time</span><span></span></div>`;
+<div class="dgrid${ds.wide ? ' wide' : ''}" style="--tpl:${ds.template};--minw:${ds.minWidth}px"><div class="dhead"><span class="pin"><span></span><span class="dc dc-row" title="${ds.fromFile ? 'row in the data file' : 'row in the examples'}">#</span></span>${heads}<span></span><span class="dc">time</span><span></span></div>`;
 }
 
 export const renderDatasetClose = (): string => '</div></section>';
@@ -119,6 +125,15 @@ export const DATA_CSS = `
 .dtemplate{padding:4px 12px;border-bottom:1px solid var(--line);font-size:13px}.dtemplate summary{cursor:pointer;color:var(--muted);font-size:12px}.dtemplate ol{margin:4px 0 4px 18px;padding:0;list-style:none}.dtemplate li{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;padding:1px 0}
 .ph{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);border-radius:4px;padding:0 4px;font-size:.95em}
 .dgrid{overflow-x:auto;padding:8px 8px 8px}
+.dset-scroll{font-size:11px;color:var(--muted);border:1px dashed var(--line);border-radius:10px;padding:0 8px}
+/* wide data sets: always scroll sideways, keep the status icon and row number pinned, visible scrollbar */
+.dgrid.wide{scrollbar-width:thin}.dgrid.wide::-webkit-scrollbar{height:10px}.dgrid.wide::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}.dgrid.wide::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+.pin{display:flex;gap:10px;align-items:baseline;min-width:0}.pin .dc-row{width:46px;flex:none}.pin>:first-child{width:22px;flex:none}
+.dgrid.wide{padding-left:0;padding-right:0}
+.dgrid.wide .pin{position:sticky;left:0;z-index:2;background:inherit;padding:2px 10px 2px 14px;margin:-2px -10px -2px -14px;width:auto}
+.dgrid.wide .dhead{background:var(--card);z-index:3}.dgrid.wide .dhead .pin{background:var(--card)}
+.dgrid.wide .dc-err{grid-column:1/-1;position:sticky;left:14px;max-width:calc(100vw - 64px);width:max-content}
+.dgrid.wide>details>.body{position:sticky;left:14px;max-width:min(calc(100vw - 56px),1300px)}
 .dhead,.dgrid>details.scenario>summary{display:grid;grid-template-columns:var(--tpl);column-gap:10px;align-items:center}
 .dhead{min-width:var(--minw);padding:6px 10px 6px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0}
 .dgrid>details.scenario{min-width:var(--minw);margin:3px 0}
@@ -130,7 +145,7 @@ export const DATA_CSS = `
 .dgrid details.scenario>summary{background:color-mix(in srgb,var(--passed) 5%,var(--card))}
 ${(['failed', 'skipped', 'pending', 'undefined', 'ambiguous'] as const).map((st) => `.dgrid details.scenario.st-${st}>summary{background:color-mix(in srgb,var(--${st}) 10%,var(--card))}`).join('\n')}
 .dgrid details.scenario[open]>summary{border-bottom:1px solid var(--line)}
-.argwrap{margin:4px 0 4px 22px;overflow-x:auto}
+.argwrap{margin:4px 0 4px 22px;overflow-x:auto;max-width:100%;scrollbar-width:thin}.argwrap::-webkit-scrollbar{height:10px}.argwrap::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
 .argtable{border-collapse:collapse;font-size:12.5px;border-left:3px solid var(--st)}
 .argtable th,.argtable td{border:1px solid var(--line);padding:3px 12px;text-align:left;white-space:nowrap}
 .argtable th{background:color-mix(in srgb,var(--st) 14%,var(--card));font-weight:600}.argtable td{background:color-mix(in srgb,var(--st) 6%,var(--card))}

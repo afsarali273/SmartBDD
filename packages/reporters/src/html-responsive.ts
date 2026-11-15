@@ -49,16 +49,17 @@ pre.err{padding-right:56px}
   pre,.logs,.tries,.atts,.argwrap,.docstring{margin-left:6px}.log .data,.logimg{margin-left:0}.lvl{min-width:4em}
   pre{max-height:300px}
   /* data-driven rows: one labelled card per row instead of a wide table */
-  .dhead{display:none}
+  .dgrid:not(.wide)>.dhead{display:none}
   .dset-head{padding:9px 10px;gap:6px 10px}.dset-time{margin-left:0}.dset-bar{width:100%;order:9}
-  .dgrid{padding:0 6px 6px;overflow-x:visible}
-  .dgrid>details.scenario{min-width:0}
-  .dgrid>details.scenario>summary{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
-  .dgrid summary .dc{white-space:normal;overflow:visible;overflow-wrap:anywhere}
-  .dgrid summary .dc[data-label]::before{content:attr(data-label);color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;margin-right:5px}
-  .dgrid summary .dc-flags:empty{display:none}
-  .dgrid summary .meta{margin-left:auto}
-  .dc-err{flex-basis:100%;margin-top:0}
+  .dgrid{padding:0 6px 6px}.dgrid:not(.wide){overflow-x:visible}
+  .dgrid:not(.wide)>details.scenario{min-width:0}
+  .dgrid:not(.wide)>details.scenario>summary{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
+  .dgrid:not(.wide) summary .dc{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+  .dgrid:not(.wide) summary .dc[data-label]::before{content:attr(data-label);color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;margin-right:5px}
+  .dgrid:not(.wide) summary .dc-flags:empty{display:none}
+  .dgrid:not(.wide) .pin{gap:8px}
+  .dgrid:not(.wide) summary .meta{margin-left:auto}
+  .dgrid:not(.wide) .dc-err{flex-basis:100%;margin-top:0}
   .dtemplate ol{margin-left:6px}.dtemplate li{overflow-wrap:anywhere}
   .view{padding:4px 8px}
   .hl{font-size:9px}

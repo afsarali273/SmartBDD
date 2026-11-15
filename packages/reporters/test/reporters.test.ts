@@ -512,3 +512,38 @@ describe('html report: responsive layout and UX hooks', () => {
     expect(readFileSync(file, 'utf8')).toContain('<span class="dc" data-label="qty" title="qty: 3">3</span>');
   });
 });
+
+describe('html report: wide data sets scroll sideways', () => {
+  async function htmlFor(columns: number) {
+    const { htmlReporter } = await import('@bddx/reporters');
+    const names = Array.from({ length: columns }, (_, i) => `c${i + 1}`);
+    const feature = `Feature: Wide\n  Scenario Outline: row <c1>\n    Given ok\n    Examples:\n      | ${names.join(' | ')} |\n      | ${names.map((_, i) => i + 1).join(' | ')} |\n`;
+    const r = new SupportRegistry();
+    r.defineStep('ok', () => {});
+    const dir = mkdtempSync(join(tmpdir(), 'bddx-html9-'));
+    const file = join(dir, 'r.html');
+    const rep = htmlReporter({ outputFile: file });
+    const bus = new EventBus();
+    bus.on((e) => rep.onEvent(e));
+    await new Executor({ registry: r, bus }).execute(parseSpec(feature, 'w.feature').scenarios);
+    await bus.flush();
+    await rep.close?.();
+    return readFileSync(file, 'utf8');
+  }
+
+  it('more than 5 parameters: scrolling grid with pinned status + row number and a hint', async () => {
+    const html = await htmlFor(14);
+    expect(html).toContain('<div class="dgrid wide"');
+    expect(html).toContain('14 columns');
+    expect(html).toContain('↔ scroll sideways');
+    expect(html).toContain('<span class="pin">');
+    expect(html).toMatch(/--minw:\d{4}px/); // grid is wider than a phone
+  });
+
+  it('5 or fewer parameters keep the compact layout (stacked cards on phones)', async () => {
+    const html = await htmlFor(4);
+    expect(html).toContain('<div class="dgrid"');
+    expect(html).not.toContain('<div class="dgrid wide"');
+    expect(html).not.toContain('scroll sideways</span>');
+  });
+});
