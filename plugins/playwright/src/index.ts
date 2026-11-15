@@ -17,6 +17,10 @@
  *               With `reuseContext` a @serial feature gets ONE context and page for all its scenarios instead
  *               (sharedContext / sharedPage, feature scoped): log in once, keep cookies and the open page.
  *   request     scenario  an APIRequestContext (no browser is launched for API-only scenarios)
+ *   expect      worker    Playwright's web-first `expect` (retrying assertions); needs the optional `@playwright/test`
+ *   newContext  scenario  `await newContext({ ... })`: extra isolated contexts (a second user, another locale ...),
+ *                         closed after the scenario
+ * Everything else Playwright has (devices, selectors, _electron, _android ...) is on the `playwright` fixture.
  *
  * Run-time overrides with -D: `-D browser=firefox`, `-D headed=true`, `-D baseURL=https://staging.example.com`.
  */
@@ -35,6 +39,9 @@ import type {
 import { defineFixture, definePlugin, type BddxPlugin, type FeatureContext, type RunContext, type StepContext } from '@bddx/runtime';
 
 type PlaywrightModule = typeof import('playwright');
+type ExpectModule = typeof import('@playwright/test');
+/** Playwright's `expect` (web-first, auto-retrying assertions). */
+export type Expect = ExpectModule['expect'];
 /** Options of `playwright.request.newContext()`. */
 export type APIRequestContextOptions = NonNullable<Parameters<APIRequest['newContext']>[0]>;
 
@@ -45,6 +52,10 @@ declare module '@bddx/runtime' {
     context: BrowserContext;
     page: Page;
     request: APIRequestContext;
+    /** Playwright's `expect`: `await expect(page.locator('h1')).toHaveText('Home')`. Needs `@playwright/test` installed. */
+    expect: Expect;
+    /** Open an extra isolated browser context (same options as `context`, plus your overrides); closed after the scenario. */
+    newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
     /** The context shared by a feature's scenarios when it reuses one (see `reuseContext`). */
     sharedContext: BrowserContext;
     sharedPage: Page;
@@ -68,6 +79,16 @@ export interface PlaywrightPluginOptions {
   context?: BrowserContextOptions;
   /** `request.newContext()` options for the `request` fixture. baseURL defaults to the context baseURL. */
   request?: APIRequestContextOptions;
+  /** Emulate a device by Playwright's name ('iPhone 15', 'Pixel 7' ...). `-D device=...` overrides. `context` options win over it. */
+  device?: string;
+  /** Attribute used by `getByTestId` (Playwright's default is 'data-testid'). */
+  testIdAttribute?: string;
+  /** Use a browser that is already running: `browserType.connect(wsEndpoint)` (Playwright server, Selenium Grid-style farms). */
+  connect?: { wsEndpoint: string; options?: Record<string, unknown> };
+  /** Chromium only: attach to a running browser over the DevTools protocol, e.g. 'http://localhost:9222'. */
+  cdpUrl?: string;
+  /** Timeout of `expect(...)` assertions (ms); Playwright's default is 5000. */
+  expectTimeoutMs?: number;
   /** Default timeout for actions (ms), `context.setDefaultTimeout`. */
   actionTimeoutMs?: number;
   /** Default timeout for navigations (ms), `context.setDefaultNavigationTimeout`. */
@@ -95,7 +116,10 @@ const bool = (v: string | undefined) => (v === undefined ? undefined : /^(1|true
 const BROWSERS: readonly BrowserName[] = ['chromium', 'firefox', 'webkit'];
 
 /** Build the plugin. `load` is how the `playwright` module is imported (tests pass a fake). */
-export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = () => import('playwright')): BddxPlugin<PlaywrightPluginOptions> {
+export function createPlaywrightPlugin(
+  load: () => Promise<PlaywrightModule> = () => import('playwright'),
+  loadExpect: () => Promise<{ expect?: Expect; default?: { expect: Expect } }> = () => import('@playwright/test'),
+): BddxPlugin<PlaywrightPluginOptions> {
   return definePlugin<PlaywrightPluginOptions>({
     name: 'playwright',
     setup(o = {}) {
@@ -106,7 +130,31 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
       const baseURLOf = (ctx: { params: Readonly<Record<string, string>> }) => ctx.params['baseURL'] ?? o.context?.baseURL;
       const artifactName = (ctx: StepContext) => `${slug(ctx.scenario.id)}${ctx.scenario.attempt > 1 ? `-attempt${ctx.scenario.attempt}` : ''}`;
 
-      defineFixture('playwright', () => load(), { scope: 'worker' });
+      defineFixture(
+        'playwright',
+        async () => {
+          const pw = await load();
+          if (o.testIdAttribute) pw.selectors.setTestIdAttribute(o.testIdAttribute);
+          return pw;
+        },
+        { scope: 'worker' },
+      );
+
+      defineFixture(
+        'expect',
+        async () => {
+          let base: Expect;
+          try {
+            const mod = await loadExpect(); // CommonJS package: the named export may only exist on `default`
+            base = (mod.expect ?? mod.default?.expect) as Expect;
+            if (!base) throw new Error('no "expect" export');
+          } catch (e) {
+            throw new Error(`@bddx/playwright: the "expect" fixture needs the optional package @playwright/test (npm i -D @playwright/test, same version as playwright): ${e instanceof Error ? e.message : String(e)}`);
+          }
+          return o.expectTimeoutMs === undefined ? base : base.configure({ timeout: o.expectTimeoutMs });
+        },
+        { scope: 'worker' },
+      );
 
       defineFixture(
         'browser',
@@ -114,7 +162,13 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
           const name = (params['browser'] ?? o.browser ?? 'chromium') as BrowserName;
           if (!BROWSERS.includes(name)) throw new Error(`@bddx/playwright: browser must be ${BROWSERS.join(', ')} (got "${name}")`);
           const headed = bool(params['headed']);
-          return playwright[name].launch({
+          const type = playwright[name];
+          if (o.connect) return type.connect(o.connect.wsEndpoint, o.connect.options);
+          if (o.cdpUrl) {
+            if (name !== 'chromium') throw new Error('@bddx/playwright: cdpUrl needs browser "chromium"');
+            return playwright.chromium.connectOverCDP(o.cdpUrl);
+          }
+          return type.launch({
             ...o.launch,
             headless: headed !== undefined ? !headed : (o.headless ?? o.launch?.headless ?? true),
             ...(o.channel && name === 'chromium' ? { channel: o.channel } : {}),
@@ -124,9 +178,17 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
       );
 
       // ---- contexts: one per scenario, or one per @serial feature when it reuses
+      const deviceOptions = (ctx: RunContext): BrowserContextOptions => {
+        const name = ctx.params['device'] ?? o.device;
+        if (!name) return {};
+        const device = (ctx.playwright as PlaywrightModule).devices[name];
+        if (!device) throw new Error(`@bddx/playwright: unknown device "${name}" (see Object.keys(playwright.devices))`);
+        return device;
+      };
       const openContext = async (browser: Browser, ctx: RunContext, title: string): Promise<BrowserContext> => {
         const baseURL = baseURLOf(ctx);
         const context = await browser.newContext({
+          ...deviceOptions(ctx),
           ...o.context,
           ...(baseURL ? { baseURL } : {}),
           ...(video !== 'off' ? { recordVideo: { dir: join(outputDir, 'videos'), ...o.context?.recordVideo } } : {}),
@@ -168,6 +230,7 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
         }
       };
 
+      const openedBy = new WeakMap<object, BrowserContext[]>();
       const shared = new WeakSet<object>();
       const featureFailed = new WeakMap<object, boolean>();
       const contextOf = new WeakMap<Page, BrowserContext>();
@@ -228,6 +291,30 @@ export function createPlaywrightPlugin(load: () => Promise<PlaywrightModule> = (
       defineFixture('page', async (ctx: StepContext) => (reuses(ctx) ? ctx.fixture('sharedPage') : (await ctx.fixture('context')).newPage()), {
         teardown: (page, { status, ctx }) => (shared.has(page) ? undefined : screenshotTo(page, status, ctx)),
       });
+
+      defineFixture(
+        'newContext',
+        async (ctx: StepContext) => {
+          const browser = await ctx.fixture('browser');
+          const opened: BrowserContext[] = [];
+          const make = async (options: BrowserContextOptions = {}) => {
+            const baseURL = baseURLOf(ctx);
+            const context = await browser.newContext({
+              ...deviceOptions(ctx),
+              ...o.context,
+              ...(baseURL ? { baseURL } : {}),
+              ...options,
+            });
+            if (o.actionTimeoutMs !== undefined) context.setDefaultTimeout(o.actionTimeoutMs);
+            if (o.navigationTimeoutMs !== undefined) context.setDefaultNavigationTimeout(o.navigationTimeoutMs);
+            opened.push(context);
+            return context;
+          };
+          openedBy.set(make, opened);
+          return make;
+        },
+        { teardown: async (make) => void (await Promise.all((openedBy.get(make) ?? []).map((c) => c.close().catch(() => undefined)))) },
+      );
 
       defineFixture(
         'request',

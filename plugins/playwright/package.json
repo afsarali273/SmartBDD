@@ -6,9 +6,15 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
@@ -17,16 +23,23 @@
   },
   "peerDependencies": {
     "@bddx/runtime": ">=0.1.0",
-    "playwright": ">=1.40.0"
+    "playwright": ">=1.40.0",
+    "@playwright/test": ">=1.40.0"
   },
   "devDependencies": {
     "@bddx/core": "file:../../packages/core",
     "@bddx/runtime": "file:../../packages/runtime",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.20.5",
     "playwright": "^1.65.1",
     "typescript": "~5.9.3"
   },
   "engines": {
     "node": ">=20.10"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
   }
 }

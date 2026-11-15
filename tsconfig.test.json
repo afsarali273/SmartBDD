@@ -7,11 +7,27 @@
     "noEmit": true,
     "rootDir": ".",
     "paths": {
-      "@bddx/core": ["./packages/core/src/index.ts"],
-      "@bddx/runtime": ["./packages/runtime/src/index.ts"],
-      "@bddx/reporters": ["./packages/reporters/src/index.ts"],
-      "@bddx/cli": ["./packages/cli/src/index.ts"]
+      "@bddx/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@bddx/runtime": [
+        "./packages/runtime/src/index.ts"
+      ],
+      "@bddx/reporters": [
+        "./packages/reporters/src/index.ts"
+      ],
+      "@bddx/cli": [
+        "./packages/cli/src/index.ts"
+      ]
     }
   },
-  "include": ["packages/*/test/**/*.ts", "conformance/**/*.ts", "examples/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "packages/*/test/**/*.ts",
+    "conformance/**/*.ts",
+    "examples/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "examples/playwright-showcase/**"
+  ]
 }

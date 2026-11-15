@@ -230,6 +230,16 @@ describe.skipIf(!built)('applySetOverrides', () => {
     expect(() => applySetOverrides(base, ['params.a.b=1'])).toThrow(/"a" is not an object/);
   });
 
+  it('works when the config holds functions (plugin objects), which cannot be cloned', async () => {
+    const { applySetOverrides } = (await import(new URL('../dist/index.js', import.meta.url).href)) as typeof import('../src/index.js');
+    const plugin = { name: 'p', setup: () => undefined };
+    const base = { plugins: [plugin], groups: { x: { mode: 'parallel' as const } } };
+    const out = applySetOverrides(base, ['groups.x.workers=2', 'workers=4']);
+    expect(out.plugins?.[0]).toBe(plugin);
+    expect(out).toMatchObject({ workers: 4, groups: { x: { mode: 'parallel', workers: 2 } } });
+    expect(base.groups.x).toEqual({ mode: 'parallel' });
+  });
+
   describe('worker processes (--pool process)', () => {
     const traceFile = () => join(mkdtempSync(join(tmpdir(), 'bddx-pool-')), 'trace.txt');
     const count = (text: string, line: string) => text.split('\n').filter((l) => l.startsWith(line)).length;

@@ -106,7 +106,8 @@ export const OPTION_KEYS = [
  * otherwise kept as plain strings. Unknown top-level keys are rejected (typo protection).
  */
 export function applySetOverrides(options: BddxOptions, sets: readonly string[]): BddxOptions {
-  const out = structuredClone(options) as Record<string, unknown>;
+  // Copy only the objects on each path being set (config may hold functions, e.g. plugin objects: not cloneable).
+  const out = { ...options } as Record<string, unknown>;
   for (const raw of sets) {
     const eq = raw.indexOf('=');
     if (eq <= 0) throw new UsageError(`--set expects path=value, got "${raw}"`);
@@ -128,7 +129,7 @@ export function applySetOverrides(options: BddxOptions, sets: readonly string[])
       else if (typeof next !== 'object' || Array.isArray(next)) {
         throw new UsageError(`--set ${raw}: "${key}" is not an object`);
       }
-      cur = cur[key] as Record<string, unknown>;
+      cur = cur[key] = { ...(cur[key] as Record<string, unknown>) };
     }
     cur[path.at(-1)!] = value;
   }

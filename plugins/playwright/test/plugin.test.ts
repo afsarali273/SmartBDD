@@ -28,12 +28,10 @@ function fakePlaywright() {
     ctxPages.push(page);
     return page;
   };
-  const browserType = (name: string) => ({
-    launch: async (opts: Record<string, unknown>) => {
-      calls.push(`launch ${name} headless=${String(opts['headless'])}${opts['channel'] ? ` channel=${String(opts['channel'])}` : ''}`);
-      return {
+  const browserType = (name: string) => {
+    const make = () => ({
         newContext: async (o: Record<string, unknown>) => {
-          calls.push(`context baseURL=${String(o['baseURL'] ?? '')}${o['recordVideo'] ? ' video' : ''}`);
+          calls.push(`context baseURL=${String(o['baseURL'] ?? '')}${o['recordVideo'] ? ' video' : ''}${o['isMobile'] ? ' mobile' : ''}${o['locale'] ? ` locale=${String(o['locale'])}` : ''}`);
           const ctxPages: unknown[] = [];
           return {
             newPage: newPage(ctxPages, !!o['recordVideo']),
@@ -48,13 +46,22 @@ function fakePlaywright() {
           };
         },
         close: async () => void calls.push(`close ${name}`),
-      };
-    },
-  });
+    });
+    return {
+      launch: async (opts: Record<string, unknown>) => {
+        calls.push(`launch ${name} headless=${String(opts['headless'])}${opts['channel'] ? ` channel=${String(opts['channel'])}` : ''}`);
+        return make();
+      },
+      connect: async (url: string) => (calls.push(`connect ${name} ${url}`), make()),
+      connectOverCDP: async (url: string) => (calls.push(`cdp ${url}`), make()),
+    };
+  };
   const module = {
     chromium: browserType('chromium'),
     firefox: browserType('firefox'),
     webkit: browserType('webkit'),
+    devices: { 'Pixel 7': { viewport: { width: 412, height: 915 }, isMobile: true } } as Record<string, unknown>,
+    selectors: { setTestIdAttribute: (a: string) => void calls.push(`testid ${a}`) },
     request: {
       newContext: async (o: Record<string, unknown>) => {
         calls.push(`request baseURL=${String(o['baseURL'] ?? '')}`);
@@ -65,16 +72,25 @@ function fakePlaywright() {
   return { calls, load: async () => module as never };
 }
 
-async function run(options: PlaywrightPluginOptions, src: string, params: Record<string, string> = {}, workers = 1) {
+async function run(options: PlaywrightPluginOptions, src: string, params: Record<string, string> = {}, workers = 1, expectLoader?: () => Promise<never>) {
   resetGlobalRegistry();
   const fake = fakePlaywright();
-  await createPlaywrightPlugin(fake.load).setup({ outputDir: '/tmp/bddx-pw-test', ...options });
+  const fakeExpect = Object.assign((v: unknown) => ({ v }), { configure: (c: { timeout: number }) => (fake.calls.push(`expect timeout ${c.timeout}`), fakeExpect) });
+  const loadExpect = async () => ({ expect: fakeExpect as never });
+  await createPlaywrightPlugin(fake.load, expectLoader ?? loadExpect).setup({ outputDir: '/tmp/bddx-pw-test', ...options });
   Given('I open {string}', async ({ page }, url: string) => page.goto(url));
   Given('the page fails', ({ page }) => {
     throw new Error(`failed on page ${String((page as unknown as { id: number }).id)}`);
   });
   Given('I call the API', async ({ request }) => assert.equal((await request.get('/health')).status(), 200));
   Given('no browser at all', () => {});
+  Given('I assert with expect', async ({ expect, page }) => {
+    await expect(page);
+  });
+  Given('I open a second user', async ({ newContext }) => {
+    const other = await newContext({ locale: 'de-DE' });
+    assert.ok(other);
+  });
   const scenarios = parseSpec(src, 'pw.feature').scenarios;
   const bus = new EventBus({ keepHistory: true });
   const result = await new Executor({ registry: getGlobalRegistry(), bus, plan: buildPlan(scenarios, scenarios, { workers }), params }).execute(scenarios);
@@ -155,6 +171,46 @@ describe('@bddx/playwright', () => {
     const { result, errors } = await run({}, TWO, { browser: 'netscape' });
     assert.equal(result.success, false);
     assert.match(errors[0]!, /browser must be chromium, firefox, webkit \(got "netscape"\)/);
+  });
+
+  it('expect fixture: Playwright\'s expect, with expectTimeoutMs applied', async () => {
+    const { calls, result } = await run({ expectTimeoutMs: 1234 }, 'Feature: F\n  Scenario: a\n    Given I assert with expect\n');
+    assert.equal(result.success, true);
+    assert.ok(calls.includes('expect timeout 1234'));
+  });
+
+  it('expect fixture explains how to install @playwright/test when it is missing', async () => {
+    const { result, errors } = await run({}, 'Feature: F\n  Scenario: a\n    Given I assert with expect\n', {}, 1, async () => {
+      throw new Error("Cannot find package '@playwright/test'");
+    });
+    assert.equal(result.success, false);
+    assert.match(errors[0]!, /optional package @playwright\/test \(npm i -D @playwright\/test/);
+  });
+
+  it('device emulation: config or -D device; context options win; unknown device is an error', async () => {
+    const a = await run({ device: 'Pixel 7', context: { locale: 'fr-FR' } }, TWO);
+    assert.ok(a.calls.includes('context baseURL= mobile locale=fr-FR'));
+    const b = await run({}, TWO, { device: 'Pixel 7' });
+    assert.ok(b.calls.includes('context baseURL= mobile'));
+    const c = await run({ device: 'Nokia 3310' }, TWO);
+    assert.match(c.errors[0]!, /unknown device "Nokia 3310"/);
+  });
+
+  it('testIdAttribute, connect and cdpUrl are passed to Playwright', async () => {
+    const a = await run({ testIdAttribute: 'data-test', connect: { wsEndpoint: 'ws://grid:3000' } }, TWO);
+    assert.ok(a.calls.includes('testid data-test'));
+    assert.ok(a.calls.includes('connect chromium ws://grid:3000'));
+    assert.ok(!a.calls.some((c) => c.startsWith('launch')));
+    const b = await run({ cdpUrl: 'http://localhost:9222' }, TWO);
+    assert.ok(b.calls.includes('cdp http://localhost:9222'));
+    const c = await run({ cdpUrl: 'http://x', browser: 'firefox' }, TWO);
+    assert.match(c.errors[0]!, /cdpUrl needs browser "chromium"/);
+  });
+
+  it('newContext opens extra isolated contexts and closes them after the scenario', async () => {
+    const { calls, result } = await run({}, 'Feature: F\n  Scenario: two users\n    Given I open a second user\n');
+    assert.equal(result.success, true);
+    assert.deepEqual(calls, ['launch chromium headless=true', 'context baseURL= locale=de-DE', 'context close', 'close chromium']);
   });
 
   const JOURNEY = (tags: string) => `${tags}

@@ -5,6 +5,7 @@ both, and this plugin connects them through bddx fixtures.
 
 ```bash
 npm i -D @bddx/playwright playwright
+npm i -D @playwright/test        # optional: only for `expect` (same version as playwright)
 npx playwright install chromium
 ```
 
@@ -32,6 +33,10 @@ class LoginPage { private page = inject('page'); open() { return this.page.goto(
 Add `import '@bddx/playwright';` (or `"types": ["@bddx/playwright"]` in tsconfig) in one support file so `ctx.page`,
 `({ page })` and `inject('page')` are typed. Importing `playwright()` in the config does not do this for step files.
 
+Tip: bddx starts a fixture only when a step names it (`({ page })`, `ctx.page`, `const { page } = ctx`, `inject('page')`).
+A helper that receives the whole `ctx` and reads `ctx.page` inside is not seen; destructure `page` in the step and pass
+it on (`docs(page)`). The error says so: `Fixture "page" is asynchronous and was not requested before use`.
+
 ## Fixtures
 
 | name | scope | what |
@@ -41,10 +46,35 @@ Add `import '@bddx/playwright';` (or `"types": ["@bddx/playwright"]` in tsconfig
 | `context` | scenario | fresh `BrowserContext` per scenario attempt (isolated cookies and storage); trace and video |
 | `page` | scenario | a page in that context; screenshot at the end |
 | `request` | scenario | `APIRequestContext` for API tests; never launches a browser |
+| `expect` | worker | Playwright's web-first `expect` (needs `@playwright/test`); `expectTimeoutMs` sets its timeout |
+| `newContext` | scenario | `await newContext({ locale: 'de-DE' })`: extra isolated contexts (second user, other locale), closed after the scenario |
 
 With `reuseContext`, a `@serial` feature uses one context and page for all its scenarios instead (feature-scoped
 `sharedContext` / `sharedPage`); see below. Scenarios that use none of these start nothing. Retries get a fresh context and page. Groups, dependencies, locks,
 `--pool process`, `--shard` and `--watch` work as usual.
+
+## Playwright features, bddx runner
+
+bddx stays the runner (groups, retries, shards, reports); the plugin hands you Playwright itself, so everything it can do
+is available:
+
+```ts
+Then('the heading is {string}', async ({ page, expect }, text: string) => {
+  await expect(page.locator('h1')).toHaveText(text);           // retries until expectTimeoutMs
+  await expect.poll(() => page.locator('li').count()).toBeGreaterThan(2);
+});
+When('a second user joins', async ({ newContext }) => {
+  const page = await (await newContext({ storageState: 'bob.json' })).newPage();
+});
+Given('a mobile user', ({ playwright }) => { /* playwright.devices, selectors, _electron, _android ... */ });
+```
+
+- Auto-waiting actions, `locator.waitFor()`, `waitForURL`, `waitForResponse`, `route`, `getByRole`, tracing, `storageState`,
+  HAR (`context: { recordHar }`), permissions, geolocation, locale, timezone: all Playwright APIs, all unchanged.
+- `device: 'Pixel 7'` (or `-D device=...`) emulates a device. `testIdAttribute` configures `getByTestId`.
+- `connect: { wsEndpoint }` or `cdpUrl: 'http://localhost:9222'` use a browser that is already running.
+- Not available: anything that needs Playwright's own test runner (`toHaveScreenshot` / snapshot matching, `test.step`,
+  `test.info()`). Use the screenshot option or attach files with `ctx.attach`.
 
 ## Options
 
@@ -56,6 +86,11 @@ With `reuseContext`, a `@serial` feature uses one context and page for all its s
 | `launch` | | extra `launch()` options (`slowMo`, `args`, `proxy` ...) |
 | `context` | | `newContext()` options (`baseURL`, `viewport`, `locale`, `storageState` ...); `-D baseURL=...` overrides `baseURL` |
 | `request` | | `request.newContext()` options; `baseURL` defaults to the context's |
+| `device` | | Playwright device name; `-D device=` overrides; `context` options win over it |
+| `testIdAttribute` | `data-testid` | attribute used by `getByTestId` |
+| `connect` | | `{ wsEndpoint, options }`: `browserType.connect` instead of launching |
+| `cdpUrl` | | chromium only: `connectOverCDP` to a running browser |
+| `expectTimeoutMs` | 5000 | timeout of `expect` assertions |
 | `actionTimeoutMs`, `navigationTimeoutMs` | Playwright's | context default timeouts |
 | `screenshot` | `'only-on-failure'` | `'off' \| 'on' \| 'only-on-failure'`; full page, attached to the report |
 | `trace` | `'off'` | same values; saved under `outputDir/traces`, path logged (`npx playwright show-trace <file>`) |
