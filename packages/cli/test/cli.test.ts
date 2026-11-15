@@ -364,4 +364,19 @@ describe.skipIf(!built)('applySetOverrides', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('--inspect expects a port number');
   });
+
+  it('--shard i/n runs a disjoint part of the plan, together all shards cover it, and bad specs exit 2', () => {
+    const ids = (shard?: string) => {
+      const r = spawnSync(process.execPath, [bin, 'plan', '--plan-format', 'json', ...(shard ? ['--shard', shard] : [])], { cwd: orchestration, encoding: 'utf8' });
+      expect(r.status).toBe(0);
+      return (JSON.parse(r.stdout) as { nodes: Array<{ id: string }> }).nodes.map((n) => n.id);
+    };
+    const all = ids();
+    const parts = ['1/3', '2/3', '3/3'].map((s) => ids(s));
+    expect(parts.flat().sort()).toEqual([...all].sort());
+    expect(new Set(parts.flat()).size).toBe(all.length);
+    const bad = spawnSync(process.execPath, [bin, '--shard', '5/2'], { cwd: orchestration, encoding: 'utf8' });
+    expect(bad.status).toBe(2);
+    expect(bad.stderr).toContain('--shard expects');
+  });
 });

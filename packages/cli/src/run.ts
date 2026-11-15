@@ -11,6 +11,9 @@ import {
   saveHistory,
   type HistoryRun,
   buildPlan,
+  parseShard,
+  shardPlan,
+  scenarioHistory,
   idsToRerun,
   mergeEventStreams,
   parseDuration,
@@ -75,6 +78,8 @@ export interface RunRequest {
   debugIO?: DebugIO;
   /** Open the Node inspector (port) and wait for a client before running. */
   inspect?: number | true;
+  /** CI sharding: run only shard i of n (`'2/4'`). Durations come from the run history when configured. */
+  shard?: string;
   /** Programmatic cancellation. CLI Ctrl+C uses the same path. */
   signal?: AbortSignal;
   /** Internal: no CLI diagnostics (worker processes repeat the parent's preparation). */
@@ -209,12 +214,45 @@ export async function prepareRun(req: RunRequest = {}): Promise<PreparedRun> {
       ...(rerunIds ? { ids: rerunIds } : {}),
     },
   );
-  const plan = buildPlan(all, selected, {
+  let plan = buildPlan(all, selected, {
     workers: opts.workers ?? 1,
     withDeps: req.withDeps ?? true,
     ...(opts.groups ? { groups: opts.groups } : {}),
     ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
   });
+  let shardNote: string[] = [];
+  if (req.shard) {
+    let spec;
+    try {
+      spec = parseShard(req.shard);
+    } catch (e) {
+      throw new UsageError((e as Error).message);
+    }
+    const h = historySettings(opts, rootDir);
+    const runs = h ? loadHistory(h.dir, h.keep) : [];
+    const durations = new Map<string, number>();
+    for (const n of plan.nodes) {
+      const ms = scenarioHistory(runs, n.id).avgMs;
+      if (ms > 0) durations.set(n.id, ms);
+    }
+    const sh = shardPlan(plan, spec, durations);
+    const total = plan.nodes.length;
+    const keep = new Set(sh.ids);
+    plan = buildPlan(all, all.filter((s) => keep.has(s.id)), {
+      workers: opts.workers ?? 1,
+      withDeps: false,
+      ...(opts.groups ? { groups: opts.groups } : {}),
+      ...(opts.defaultMode ? { defaultMode: opts.defaultMode } : {}),
+    });
+    shardNote = [
+      `shard ${spec.index}/${spec.count}: ${sh.ids.length} of ${total} scenario(s); estimated load per shard: ${sh.loads.map((l) => `${Math.round(l)}ms`).join(', ')}`,
+      ...(!runs.length ? ['shard: no run history, scenarios weighted equally (enable `history: true` and run once for duration-based balancing)'] : []),
+      ...(sh.largestUnit.ids.length > total / spec.count && spec.count > 1
+        ? [`shard: one dependency/group/lock cluster has ${sh.largestUnit.ids.length} scenarios and limits the speed-up`]
+        : []),
+    ];
+  }
+  if (!req.quiet) for (const line of shardNote) process.stderr.write(`bddx: ${line}\n`);
   cliDebug(req.quiet ? undefined : opts.logLevel, [
     `config: ${loaded.configFile ?? '(none, defaults)'}${req.profile ? `, profile ${req.profile}` : ''}`,
     ...(req.sets?.length ? [`--set: ${req.sets.join(' ')}`] : []),
@@ -240,6 +278,10 @@ export function forDebugging(opts: BddxOptions): BddxOptions {
 /** The whole `bddx run` pipeline, usable programmatically. */
 export async function runBddx(req: RunRequest = {}): Promise<RunOutcome> {
   const { rootDir, opts, specs, plan, rerunIds } = await prepareRun(req);
+  if (req.shard && !plan.nodes.length) {
+    process.stdout.write(`Nothing to run in shard ${req.shard}.\n`);
+    return { success: true, exitCode: 0, scenarios: [] };
+  }
   if (rerunIds && !plan.nodes.length) {
     process.stdout.write(`Nothing to rerun: every scenario passed in ${req.rerunFailed}.\n`);
     return { success: true, exitCode: 0, scenarios: [] };

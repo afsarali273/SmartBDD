@@ -45,6 +45,8 @@ Options:
                           Runs one scenario at a time in this process, no retries or time budgets
       --debug-step        Like --debug, but pause before every step
       --inspect [port]    Open the Node inspector (default 9229) and wait for a debugger to attach
+      --shard <i/n>       Run only shard i of n (CI matrix). Dependencies, group and lock members stay together; balanced
+                          by recorded duration (config history: true). Also works with plan
       --fail-on-warnings   With validate, return exit 1 when warnings are found
   -h, --help              Show help
   -v, --version           Show version
@@ -70,6 +72,7 @@ export async function main(argv: string[]): Promise<number> {
         define: { type: 'string', short: 'D', multiple: true },
         'dry-run': { type: 'boolean' },
         debug: { type: 'boolean' },
+        shard: { type: 'string' },
         'debug-step': { type: 'boolean' },
         inspect: { type: 'string' },
         'fail-fast': { type: 'boolean' },
@@ -176,6 +179,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(values.tags ? { tags: values.tags } : {}),
         ...(values.name ? { name: values.name } : {}),
         ...(workers ? { workers } : {}),
+        ...(values.shard ? { shard: values.shard } : {}),
         ...(noDeps ? { withDeps: false } : {}),
       });
       if (values.explain) process.stdout.write(`${explainNode(plan, values.explain)}\n`);
@@ -199,6 +203,7 @@ export async function main(argv: string[]): Promise<number> {
       ...(values.format ? { formats: values.format } : {}),
       ...(Object.keys(params).length ? { params } : {}),
       ...(values['dry-run'] ? { dryRun: true } : {}),
+      ...(values.shard ? { shard: values.shard } : {}),
       ...(values['debug-step'] ? { debug: 'step' as const } : values.debug || values.inspect !== undefined ? { debug: 'fail' as const } : {}),
       ...(values.inspect !== undefined ? { inspect: inspectPort(values.inspect) } : {}),
       ...(values['fail-fast'] ? { failFast: true } : {}),
